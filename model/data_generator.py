@@ -54,14 +54,18 @@ class ProteinDataGenerator:
         """Generate sequence with realistic amino acid frequencies."""
         # Approximate amino acid frequencies in proteins
         aa_freq = {
-            'A': 0.08, 'C': 0.02, 'D': 0.05, 'E': 0.06, 'F': 0.04,
-            'G': 0.07, 'H': 0.02, 'I': 0.05, 'K': 0.06, 'L': 0.10,
-            'M': 0.02, 'N': 0.04, 'P': 0.05, 'Q': 0.04, 'R': 0.05,
-            'S': 0.07, 'T': 0.06, 'V': 0.07, 'W': 0.01, 'Y': 0.03
+            'A': 0.0825, 'C': 0.0137, 'D': 0.0545, 'E': 0.0675, 'F': 0.0386,
+            'G': 0.0708, 'H': 0.0227, 'I': 0.0596, 'K': 0.0584, 'L': 0.0966,
+            'M': 0.0242, 'N': 0.0406, 'P': 0.0470, 'Q': 0.0393, 'R': 0.0553,
+            'S': 0.0656, 'T': 0.0534, 'V': 0.0687, 'W': 0.0108, 'Y': 0.0292
         }
         
         amino_acids = list(aa_freq.keys())
         probabilities = [aa_freq[aa] for aa in amino_acids]
+        
+        # Normalize probabilities to ensure they sum to exactly 1.0
+        prob_sum = sum(probabilities)
+        probabilities = [p / prob_sum for p in probabilities]
         
         sequence = ''.join(np.random.choice(amino_acids, size=length, p=probabilities))
         return sequence
@@ -109,7 +113,7 @@ class ProteinDataGenerator:
         
         except Exception as e:
             print(f"Error fetching UniProt data: {e}")
-            # Return synthetic data as fallback
+            # Return empty list - caller will handle fallback
             return []
         
         return data

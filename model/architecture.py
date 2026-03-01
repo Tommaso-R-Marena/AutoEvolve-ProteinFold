@@ -21,8 +21,10 @@ class EvolvableProteinFoldingModel(nn.Module):
         )
         
         # Pairwise feature extraction
+        # Input: concat(left_embed, right_embed) = 2*embedding_dim
+        pair_input_dim = config['embedding_dim'] * 2
         self.pair_embedding = nn.Linear(
-            config['embedding_dim'] * 2 + config['n_features'],
+            pair_input_dim,
             config['pair_dim']
         )
         
@@ -84,30 +86,13 @@ class EvolvableProteinFoldingModel(nn.Module):
         """Compute pairwise features from sequence embeddings."""
         batch_size, seq_len, embed_dim = seq_embed.shape
         
-        # Outer concatenation
+        # Outer concatenation: [B, L, L, 2*D]
         left = seq_embed.unsqueeze(2).expand(-1, -1, seq_len, -1)
         right = seq_embed.unsqueeze(1).expand(-1, seq_len, -1, -1)
         pair_concat = torch.cat([left, right], dim=-1)
         
-        # Add auxiliary features if provided
-        if features is not None:
-            pair_concat = torch.cat([pair_concat, features], dim=-1)
-        else:
-            # Add position encoding
-            pos_enc = self._positional_encoding(seq_len, embed_dim).to(seq_embed.device)
-            pos_enc = pos_enc.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, seq_len, -1)
-            pair_concat = torch.cat([pair_concat, pos_enc], dim=-1)
-        
+        # Project to pair_dim
         return self.pair_embedding(pair_concat)
-    
-    def _positional_encoding(self, seq_len: int, d_model: int) -> torch.Tensor:
-        """Generate sinusoidal positional encoding."""
-        position = torch.arange(seq_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
-        pe = torch.zeros(seq_len, d_model)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        return pe
     
     def mutate_architecture(self, mutation_rate: float = 0.1) -> Dict:
         """Evolve architecture by adding/removing layers or modifying hyperparameters."""
