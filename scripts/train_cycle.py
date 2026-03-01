@@ -37,7 +37,7 @@ class ProteinFoldingLoss(nn.Module):
             # Clamp to prevent extreme values
             coord_loss = torch.clamp(coord_loss, 0, 1000)
         except Exception as e:
-            print(f"Warning: Coordinate loss error: {e}. Using fallback.")
+            print(f"⚠️  Warning: Coordinate loss error: {e}. Using fallback.")
             coord_loss = torch.tensor(0.0, device=predictions['coordinates'].device)
         
         # Angle loss with stability
@@ -48,7 +48,7 @@ class ProteinFoldingLoss(nn.Module):
             )
             angle_loss = torch.clamp(angle_loss, 0, 1000)
         except Exception as e:
-            print(f"Warning: Angle loss error: {e}. Using fallback.")
+            print(f"⚠️  Warning: Angle loss error: {e}. Using fallback.")
             angle_loss = torch.tensor(0.0, device=predictions['angles'].device)
         
         # Confidence loss with value checking
@@ -68,10 +68,10 @@ class ProteinFoldingLoss(nn.Module):
             
             # Check for NaN or Inf
             if torch.isnan(pred_confidence).any() or torch.isinf(pred_confidence).any():
-                print("Warning: NaN or Inf in predicted confidence. Skipping confidence loss.")
+                print("⚠️  Warning: NaN or Inf in predicted confidence. Skipping confidence loss.")
                 confidence_loss = torch.tensor(0.0, device=pred_confidence.device)
             elif torch.isnan(target_confidence).any() or torch.isinf(target_confidence).any():
-                print("Warning: NaN or Inf in target confidence. Skipping confidence loss.")
+                print("⚠️  Warning: NaN or Inf in target confidence. Skipping confidence loss.")
                 confidence_loss = torch.tensor(0.0, device=pred_confidence.device)
             else:
                 confidence_loss = nn.functional.binary_cross_entropy(
@@ -81,7 +81,7 @@ class ProteinFoldingLoss(nn.Module):
                 )
                 confidence_loss = torch.clamp(confidence_loss, 0, 10)
         except Exception as e:
-            print(f"Warning: Confidence loss error: {e}. Using fallback.")
+            print(f"⚠️  Warning: Confidence loss error: {e}. Using fallback.")
             confidence_loss = torch.tensor(0.0, device=predictions['confidence'].device)
         
         # Combine losses with error checking
@@ -94,10 +94,10 @@ class ProteinFoldingLoss(nn.Module):
             
             # Final safety check
             if torch.isnan(total_loss) or torch.isinf(total_loss):
-                print("Warning: Total loss is NaN or Inf. Using fallback loss.")
+                print("⚠️  Warning: Total loss is NaN or Inf. Using fallback loss.")
                 total_loss = torch.tensor(10.0, device=total_loss.device, requires_grad=True)
         except Exception as e:
-            print(f"Warning: Loss combination error: {e}. Using fallback.")
+            print(f"⚠️  Warning: Loss combination error: {e}. Using fallback.")
             total_loss = torch.tensor(10.0, requires_grad=True)
         
         return total_loss, {
@@ -134,7 +134,7 @@ class TrainingState:
                 pickle.dump(state, f)
             temp_file.replace(self.state_file)
         except Exception as e:
-            print(f"Warning: Failed to save training state: {e}")
+            print(f"⚠️  Warning: Failed to save training state: {e}")
     
     def load_state(self):
         """Load training state if exists."""
@@ -145,7 +145,7 @@ class TrainingState:
             with open(self.state_file, 'rb') as f:
                 return pickle.load(f)
         except Exception as e:
-            print(f"Warning: Failed to load training state: {e}")
+            print(f"⚠️  Warning: Failed to load training state: {e}")
             # Try to load from backup
             backup_file = self.state_file.with_suffix('.bak')
             if backup_file.exists():
@@ -166,13 +166,15 @@ class TrainingState:
                     self.state_file.replace(backup_file)
                 self.state_file.unlink(missing_ok=True)
         except Exception as e:
-            print(f"Warning: Failed to clear training state: {e}")
+            print(f"⚠️  Warning: Failed to clear training state: {e}")
 
 def train_cycle(args):
     """Run a training cycle with comprehensive error handling."""
+    training_successful = False
+    
     try:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Using device: {device}")
+        print(f"🖥️  Using device: {device}")
         
         # Training state manager
         state_manager = TrainingState()
@@ -183,17 +185,17 @@ def train_cycle(args):
         
         if checkpoint_path.exists():
             try:
-                print("Loading existing model...")
+                print("📦 Loading existing model...")
                 model = EvolvableProteinFoldingModel.load_checkpoint(str(checkpoint_path))
-                print(f"Loaded model at generation {model.generation}")
+                print(f"✅ Loaded model at generation {model.generation}")
             except Exception as e:
-                print(f"Warning: Failed to load checkpoint: {e}")
-                print("Creating new model instead...")
+                print(f"⚠️  Warning: Failed to load checkpoint: {e}")
+                print("🔨 Creating new model instead...")
                 with open(config_path) as f:
                     config = json.load(f)
                 model = EvolvableProteinFoldingModel(config)
         else:
-            print("Creating new model...")
+            print("🔨 Creating new model...")
             with open(config_path) as f:
                 config = json.load(f)
             model = EvolvableProteinFoldingModel(config)
@@ -207,11 +209,11 @@ def train_cycle(args):
         data_generator = ProteinDataGenerator()
         
         # Try to fetch real data from UniProt
-        print("\nAttempting to fetch real protein data...")
+        print("\n🌐 Attempting to fetch real protein data...")
         try:
             real_data = data_generator.fetch_real_data_uniprot(n_samples=50)
             if real_data:
-                print(f"✓ Fetched {len(real_data)} real protein sequences from UniProt")
+                print(f"✅ Fetched {len(real_data)} real protein sequences from UniProt")
                 data_info_path = Path('data/training_data_info.json')
                 data_info_path.parent.mkdir(exist_ok=True, parents=True)
                 with open(data_info_path, 'w') as f:
@@ -220,10 +222,10 @@ def train_cycle(args):
                         'last_updated': time.time()
                     }, f)
             else:
-                print("No real data fetched, using synthetic data only")
+                print("⚠️  No real data fetched, using synthetic data only")
         except Exception as e:
-            print(f"Warning: Failed to fetch real data: {e}")
-            print("Using synthetic data only")
+            print(f"⚠️  Warning: Failed to fetch real data: {e}")
+            print("🔬 Using synthetic data only")
         
         # Optimizer with adaptive learning rate
         base_lr = 1e-4 * (0.95 ** model.generation)
@@ -241,7 +243,7 @@ def train_cycle(args):
             saved_state = state_manager.load_state()
             if saved_state:
                 try:
-                    print(f"\n✓ Resuming from epoch {saved_state['epoch']}")
+                    print(f"\n♻️  Resuming from epoch {saved_state['epoch']}")
                     start_epoch = saved_state['epoch']
                     total_samples_seen = saved_state['total_samples']
                     best_loss = saved_state['best_loss']
@@ -253,11 +255,11 @@ def train_cycle(args):
                     torch.set_rng_state(saved_state['rng_state']['torch'])
                     np.random.set_state(saved_state['rng_state']['numpy'])
                     
-                    print(f"  Total samples processed: {total_samples_seen:,}")
-                    print(f"  Best loss so far: {best_loss:.4f}")
+                    print(f"  📊 Total samples processed: {total_samples_seen:,}")
+                    print(f"  🎯 Best loss so far: {best_loss:.4f}")
                 except Exception as e:
-                    print(f"Warning: Failed to restore training state: {e}")
-                    print("Starting fresh...")
+                    print(f"⚠️  Warning: Failed to restore training state: {e}")
+                    print("🔄 Starting fresh...")
         
         # Training loop
         start_time = time.time()
@@ -267,9 +269,9 @@ def train_cycle(args):
         consecutive_errors = 0
         max_consecutive_errors = 10
         
-        print(f"\nStarting training for {max_time} seconds...")
-        print(f"Will save state every 100 epochs for seamless resumption")
-        print(f"Max sequence length: {max_seq_len}\n")
+        print(f"\n🚀 Starting training for {max_time} seconds...")
+        print(f"💾 Will save state every 100 epochs for seamless resumption")
+        print(f"📏 Max sequence length: {max_seq_len}\n")
         
         while time.time() - start_time < max_time and consecutive_errors < max_consecutive_errors:
             try:
@@ -281,11 +283,11 @@ def train_cycle(args):
                     batch = data_generator.generate_synthetic_batch(
                         args.batch_size,
                         min_len=30,
-                        max_len=min(max_seq_len, 200)  # Cap at max_seq_len or 200
+                        max_len=min(max_seq_len, 200)
                     )
                     total_samples_seen += args.batch_size
                 except Exception as e:
-                    print(f"Warning: Batch generation failed: {e}. Retrying...")
+                    print(f"⚠️  Warning: Batch generation failed: {e}. Retrying...")
                     consecutive_errors += 1
                     continue
                 
@@ -305,7 +307,7 @@ def train_cycle(args):
                     
                     # Sanity check predictions
                     if torch.isnan(predictions['coordinates']).any() or torch.isinf(predictions['coordinates']).any():
-                        print(f"Warning: NaN or Inf in predictions at epoch {epoch}. Skipping this batch.")
+                        print(f"⚠️  Warning: NaN or Inf in predictions at epoch {epoch}. Skipping batch.")
                         consecutive_errors += 1
                         continue
                     
@@ -316,11 +318,11 @@ def train_cycle(args):
                         consecutive_errors += 1
                         continue
                     else:
-                        print(f"Runtime error during forward pass: {e}")
+                        print(f"⚠️  Runtime error during forward pass: {e}")
                         consecutive_errors += 1
                         continue
                 except Exception as e:
-                    print(f"Unexpected error during forward pass: {e}")
+                    print(f"⚠️  Unexpected error during forward pass: {e}")
                     consecutive_errors += 1
                     continue
                 
@@ -335,12 +337,13 @@ def train_cycle(args):
                     
                     # Check loss validity
                     if torch.isnan(loss) or torch.isinf(loss) or loss.item() > 10000:
-                        print(f"Warning: Invalid loss at epoch {epoch}: {loss.item()}. Skipping batch.")
+                        print(f"⚠️  Warning: Invalid loss at epoch {epoch}: {loss.item()}. Skipping batch.")
                         consecutive_errors += 1
                         continue
                     
                 except Exception as e:
-                    print(f"Error computing loss: {e}")
+                    print(f"⚠️  Error computing loss: {e}")
+                    print(f"    Traceback: {traceback.format_exc()}")
                     consecutive_errors += 1
                     continue
                 
@@ -351,7 +354,7 @@ def train_cycle(args):
                     # Check for gradient explosion
                     total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                     if total_norm > 100:
-                        print(f"Warning: Large gradient norm ({total_norm:.2f}) at epoch {epoch}")
+                        print(f"⚠️  Warning: Large gradient norm ({total_norm:.2f}) at epoch {epoch}")
                     
                     optimizer.step()
                     scheduler.step()
@@ -360,7 +363,7 @@ def train_cycle(args):
                     consecutive_errors = 0
                     
                 except Exception as e:
-                    print(f"Error during backward pass: {e}")
+                    print(f"⚠️  Error during backward pass: {e}")
                     consecutive_errors += 1
                     continue
                 
@@ -368,10 +371,10 @@ def train_cycle(args):
                 if epoch % 10 == 0:
                     elapsed = time.time() - start_time
                     remaining = max_time - elapsed
-                    print(f"Epoch {epoch} | Loss: {loss.item():.4f} | "
+                    print(f"📈 Epoch {epoch} | Loss: {loss.item():.4f} | "
                           f"Coord: {loss_dict['coord_loss']:.4f} | "
                           f"Samples: {total_samples_seen:,} | "
-                          f"Time: {elapsed:.0f}s | Remaining: {remaining:.0f}s")
+                          f"⏱️  {elapsed:.0f}s | Remaining: {remaining:.0f}s")
                 
                 # Save checkpoint periodically
                 if loss.item() < best_loss and epoch % 50 == 0:
@@ -387,9 +390,9 @@ def train_cycle(args):
                         
                         checkpoint_path.parent.mkdir(exist_ok=True)
                         model.save_checkpoint(str(checkpoint_path), metadata)
-                        print(f"  → Saved checkpoint with loss {loss.item():.4f}")
+                        print(f"  💾 Saved checkpoint with loss {loss.item():.4f}")
                     except Exception as e:
-                        print(f"Warning: Failed to save checkpoint: {e}")
+                        print(f"⚠️  Warning: Failed to save checkpoint: {e}")
                 
                 # Save training state every 100 epochs
                 if epoch % 100 == 0:
@@ -406,35 +409,40 @@ def train_cycle(args):
                             }
                         )
                     except Exception as e:
-                        print(f"Warning: Failed to save training state: {e}")
+                        print(f"⚠️  Warning: Failed to save training state: {e}")
             
             except KeyboardInterrupt:
-                print("\n\nTraining interrupted by user. Saving state...")
+                print("\n\n⏸️  Training interrupted by user. Saving state...")
                 break
             except Exception as e:
-                print(f"\nUnexpected error at epoch {epoch}: {e}")
+                print(f"\n⚠️  Unexpected error at epoch {epoch}: {e}")
                 print(traceback.format_exc())
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
-                    print(f"\nToo many consecutive errors ({consecutive_errors}). Stopping training.")
+                    print(f"\n❌ Too many consecutive errors ({consecutive_errors}). Stopping training.")
                     break
         
+        # Determine if training was successful
+        training_successful = consecutive_errors < max_consecutive_errors
+        
         # Check if we stopped due to errors
-        if consecutive_errors >= max_consecutive_errors:
+        if not training_successful:
             print(f"\n⚠️  Training stopped due to {consecutive_errors} consecutive errors.")
+        else:
+            print(f"\n✅ Training completed successfully!")
         
         # Final save
-        print("\nTraining cycle complete. Saving final state...")
+        print("\n💾 Saving final state...")
         try:
             model.save_checkpoint(str(checkpoint_path), {
                 'final_epoch': epoch,
                 'final_loss': best_loss,
                 'total_time': time.time() - start_time,
                 'total_samples': total_samples_seen,
-                'completed': consecutive_errors < max_consecutive_errors
+                'completed': training_successful
             })
         except Exception as e:
-            print(f"Warning: Failed to save final checkpoint: {e}")
+            print(f"⚠️  Warning: Failed to save final checkpoint: {e}")
         
         # Save final training state
         try:
@@ -450,7 +458,7 @@ def train_cycle(args):
                 }
             )
         except Exception as e:
-            print(f"Warning: Failed to save final training state: {e}")
+            print(f"⚠️  Warning: Failed to save final training state: {e}")
         
         # Save metrics
         try:
@@ -465,23 +473,28 @@ def train_cycle(args):
                 'training_time': time.time() - start_time,
                 'total_samples': total_samples_seen,
                 'samples_per_epoch': total_samples_seen / epoch if epoch > 0 else 0,
-                'completed_successfully': consecutive_errors < max_consecutive_errors
+                'completed_successfully': training_successful
             }
             
             with open(metrics_path, 'w') as f:
                 json.dump(metrics, f, indent=2)
+            print(f"📊 Metrics saved to {metrics_path}")
         except Exception as e:
-            print(f"Warning: Failed to save metrics: {e}")
+            print(f"⚠️  Warning: Failed to save metrics: {e}")
         
         print(f"\n{'='*60}")
-        print("Training Summary:")
+        print("📊 Training Summary:")
         print(f"{'='*60}")
-        print(f"  Epochs: {epoch} (started from {start_epoch})")
-        print(f"  Samples processed: {total_samples_seen:,}")
-        print(f"  Training time: {time.time() - start_time:.1f}s")
-        print(f"  Best loss: {best_loss:.4f}")
-        print(f"  Status: {'Completed' if consecutive_errors < max_consecutive_errors else 'Stopped (errors)'}")
+        print(f"  🔢 Epochs: {epoch} (started from {start_epoch})")
+        print(f"  📦 Samples processed: {total_samples_seen:,}")
+        print(f"  ⏱️  Training time: {time.time() - start_time:.1f}s")
+        print(f"  🎯 Best loss: {best_loss:.4f}")
+        print(f"  ✅ Status: {'Completed' if training_successful else 'Stopped (errors)'}")
         print(f"{'='*60}\n")
+        
+        # Exit with appropriate code
+        if not training_successful:
+            sys.exit(1)
         
     except Exception as e:
         print(f"\n❌ Fatal error in training cycle: {e}")

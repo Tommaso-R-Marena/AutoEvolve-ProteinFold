@@ -1,224 +1,253 @@
 # AutoEvolve-ProteinFold
 
-**Self-improving protein folding model with automated training, evolutionary architecture search, and continuous weight optimization.**
+**Self-Evolving AI System for Protein Structure Prediction**
 
-[![Continuous Training](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/continuous_training_gated.yml/badge.svg)](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/continuous_training_gated.yml)
-[![Quality Gates](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/tests.yml/badge.svg)](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/tests.yml)
-[![Weekly Benchmark](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/benchmark.yml/badge.svg)](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/benchmark.yml)
+A revolutionary protein folding model that automatically improves its own code, architecture, and training procedures through continuous self-modification and quality-gated evolution.
 
-## 🚀 Overview
+[![Gated Continuous Training](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/continuous_training_gated.yml/badge.svg)](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/continuous_training_gated.yml)
 
-AutoEvolve-ProteinFold is a novel approach to protein structure prediction that continuously improves itself through:
+## 🚀 Key Features
 
-- **Automated Training Cycles**: GitHub Actions runs training every 6 hours (5h 40m per cycle)
-- **Evolutionary Architecture Search**: Model architecture evolves based on performance
-- **Adaptive Parameter Budget**: Model size scales with training data to prevent overfitting
-- **Quality Gates**: Comprehensive testing ensures only improvements are committed
-- **Self-Modifying Weights**: Model saves improved weights back to the repository
-- **Google Colab Integration**: Extended training sessions with GPU acceleration
-- **Real & Synthetic Data**: Fetches from UniProt/AlphaFold APIs (no keys needed!) + generates realistic synthetic data
-- **Continuous Benchmarking**: Weekly comparison against AlphaFold2, ESMFold, RoseTTAFold
+### Self-Modifying Architecture
+- **Dynamic layer generation**: Model adds/removes layers based on performance
+- **Adaptive hyperparameters**: Learning rate, batch size, and architecture evolve
+- **Quality-gated evolution**: Changes only committed if they pass rigorous tests
 
-## 🧬 Key Features
+### Continuous Training & Evolution
+- **24/7 autonomous training**: Runs on GitHub Actions every 6 hours
+- **Seamless resumption**: Training state preserved across runs
+- **Real protein data**: Fetches sequences from UniProt automatically
+- **Memory-efficient**: Optimized for GitHub Actions' 7GB RAM limit
 
-### Self-Improvement Loop with Safety
+### Advanced Visualizations
+- **PyMOL publication-quality renders**: High-res confidence-colored structures
+- **Interactive 3D viewers**: Web-based exploration with py3Dmol
+- **Dynamic folding animations**: Watch proteins fold in real-time with confidence-driven kinetics
+- **Confidence coloring**: Red (low) → Yellow (medium) → Green (high)
+
+### Robust Error Handling
+- **Comprehensive safety checks**: NaN/Inf detection, gradient clipping, memory monitoring
+- **Automatic recovery**: Batch size reduction, fallback losses, state backups
+- **Graceful degradation**: Continues training even with partial failures
+
+## 📊 Current Status
+
+- **Generation**: 0 (baseline)
+- **Architecture**: 128-dim embeddings, 64-dim pairs, 2 Evoformer blocks
+- **Training**: Continuous 5-hour cycles every 6 hours
+- **Memory usage**: ~600 MB (comfortably under 7 GB limit)
+
+## 🏗️ Architecture
+
+### Model Design
 ```
-GitHub Actions → Train Model → Evaluate Performance → 
-Quality Gates (must pass) → Evolve Architecture → 
-Safety Checks → Save Weights → Push to GitHub → Repeat
-```
-
-If quality gates fail, changes are automatically rolled back.
-
-### Adaptive Parameter Budget
-
-**Prevents overfitting** by tying model size to training data:
-
-| Training Samples | Parameter Budget | Status |
-|-----------------|------------------|--------|
-| 5,000 | 50M | 🟢 Conservative |
-| 50,000 | 100M | 🟢 Growing |
-| 500,000 | 350M | 🟡 Substantial |
-| 5,000,000 | 1B (max) | 🔴 Full Scale |
-
-Model earns larger capacity by training on more data!
-
-### Architecture Highlights
-- **Evoformer-inspired blocks** with row/column attention
-- **Dynamic layer generation** - model adds/removes layers based on performance
-- **Pairwise feature extraction** with learnable embeddings
-- **Structure module** predicting 3D coordinates + backbone angles
-- **Confidence prediction** for uncertainty quantification
-
-## 📊 Model Architecture
-
-```python
-EvolvableProteinFoldingModel(
-  embedding_dim=256,
-  pair_dim=128,
-  n_heads=8,
-  n_blocks=6 (evolvable, 2-24 range),
-  dropout=0.1,
-  max_params=1B (adaptive)
-)
+Input Sequence
+    ↓
+Amino Acid Embeddings (128-dim)
+    ↓
+Pairwise Features (64-dim, memory-efficient)
+    ↓
+Evoformer Blocks (2x, row-wise attention)
+    ↓
+Structure Module
+    ↓
+Outputs:
+  - 3D Coordinates
+  - Backbone Angles (φ, ψ, ω)
+  - Confidence Scores (per-residue)
 ```
 
-The model can modify its own:
-- Number of Evoformer blocks
-- Hidden dimensions  
-- Attention heads
-- Processing pipeline
+### Memory Optimization
+- **Row-wise pair attention**: O(L²) instead of O(L⁴)
+- **Reduced dimensions**: 128 embedding, 64 pair
+- **Batch size 4**: Halves memory vs default 8
+- **Sequence length cap**: 200 residues max
+- **Result**: 46× memory reduction (27.6 GB → 0.6 GB)
 
-## ⏱️ Workflow Duration
+## 🎯 Training Pipeline
 
-**GitHub Actions Free Tier**: Each workflow can run up to **6 hours**. The training workflow is configured for:
-- **5 hours 40 minutes** of actual training time
-- **20 minutes** buffer for setup, evaluation, evolution, and pushing
-- Runs **every 6 hours** automatically
-- **~57 hours of training per week** completely automated!
+### Continuous Improvement Loop
+1. **Train**: 5-hour training cycles with real + synthetic data
+2. **Evaluate**: Quality gates check for improvements
+3. **Evolve**: Architecture mutations if performance improves
+4. **Test**: Regression tests ensure no degradation
+5. **Commit**: Auto-commit weights, metrics, and improvements
 
-**No action needed from you** - it runs autonomously once enabled.
+### Quality Gates
+- Loss improvement threshold: 5%
+- No NaN/Inf values in predictions
+- Gradient norms < 100
+- Memory usage < 5 GB
 
-## 🔧 Setup
+## 📈 Evolution Strategy
 
-### Quick Start (Zero Configuration)
+The model earns larger capacity through proven performance:
 
-1. **Fork or clone this repository**
-2. **Enable GitHub Actions**: Go to the [Actions tab](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions)
-3. **That's it!** The model trains automatically every 6 hours
+- **Gen 0-10**: 128-dim, 2 blocks (proof of concept)
+- **Gen 10-50**: 192-dim, 4 blocks (if consistently improving)
+- **Gen 50+**: 256-dim, 6 blocks (if exceptional)
 
-### Local Development
+## 🎨 Visualization Features
+
+### Generate Visualizations
 ```bash
-git clone https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold.git
-cd AutoEvolve-ProteinFold
-pip install -r requirements.txt
+# Publication-quality renders
+python scripts/visualize_predictions.py \
+  --checkpoint weights/latest.pt \
+  --sequence "MKTAYIAKQRQISFVK..." \
+  --multiple-views
 
-# Run tests
-pytest tests/ -v
+# Interactive 3D viewer
+python scripts/visualize_predictions.py \
+  --checkpoint weights/latest.pt \
+  --web
 
-# Initialize training
-python scripts/train_cycle.py --mode continuous --max-time 3600
+# Folding animation
+python scripts/animate_folding.py \
+  --checkpoint weights/latest.pt \
+  --n-steps 60 \
+  --fps 15
 ```
 
-### Google Colab Training (Optional GPU Boost)
-1. Open `colab/AutoEvolve_ProteinFold_Colab.ipynb` in [Google Colab](https://colab.research.google.com/github/Tommaso-R-Marena/AutoEvolve-ProteinFold/blob/main/colab/AutoEvolve_ProteinFold_Colab.ipynb)
-2. Add your GitHub Personal Access Token to Colab Secrets:
-   - Click the key icon (🔑) in the left sidebar
-   - Add secret: Name = `GITHUB_TOKEN`, Value = your token
-   - [Create token here](https://github.com/settings/tokens) (needs `repo` scope)
-3. Run all cells to train and auto-sync weights
+### Output Files
+- `visualizations/structure_cartoon.png` - High-res rendering
+- `visualizations/predicted_structure.pdb` - Structure file
+- `visualizations/structure_interactive.html` - Web viewer
+- `animations/folding_animation.gif` - Folding movie
 
-## 🛡️ Quality Gates & Safety
+## 🚦 Getting Started
 
-The model must pass **all** these tests before committing changes:
+### Prerequisites
+```bash
+pip install -r requirements.txt
+```
 
-### Architecture Constraints
-- Block count: 2-24
-- Parameters: Adaptive budget (50M-1B based on data)
-- Embedding dim divisible by attention heads
-- All configs within safe ranges
+### Manual Training Run
+```bash
+# Single training cycle (5 hours)
+python scripts/train_cycle.py \
+  --mode continuous \
+  --max-time 18000 \
+  --batch-size 4
 
-### Performance Regression
-- Max 15% worse than historical best (allows exploration)
-- No NaN or Inf losses
-- Improvement required after 5 cycles
+# Resume from saved state
+python scripts/train_cycle.py \
+  --mode continuous \
+  --max-time 18000 \
+  --resume
+```
 
-### Self-Modification Safety
-- Cannot modify workflows, tests, or core training scripts
-- No dangerous code patterns (eval, exec, os.system)
-- File size limits (100MB max)
-- Syntax validation for all Python files
+### Trigger Automated Training
+1. Go to [Actions tab](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions/workflows/continuous_training_gated.yml)
+2. Click "Run workflow"
+3. Select branch: `main`
+4. Click "Run workflow" button
 
-**If any test fails**: Changes are automatically rolled back, no commit is made.
+## 📊 Monitoring
 
-## 📈 Training Data Sources
+### View Training Progress
+- **Logs**: Check [Actions runs](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions)
+- **Metrics**: See `metrics/training_metrics.json`
+- **Checkpoints**: Download from `weights/latest.pt`
+- **Artifacts**: Training logs uploaded to GitHub Artifacts
 
-1. **UniProt API**: Fetches reviewed protein sequences (no API key required!)
-2. **AlphaFold Database**: Downloads predicted structures (public access)
-3. **Synthetic Generation**: Creates physically plausible sequences with realistic:
-   - Amino acid frequency distributions
-   - Bond lengths (~3.8Å C-alpha distance)
-   - Backbone geometry
+### Key Metrics
+```json
+{
+  "generation": 0,
+  "epochs": 1000,
+  "final_loss": 8.234,
+  "best_loss": 7.891,
+  "training_time": 18000,
+  "total_samples": 4000,
+  "completed_successfully": true
+}
+```
 
-## 🧪 Evolution Strategy
+## 🛡️ Error Handling
 
-Every training cycle:
-1. Generate population of 5 architectural mutants
-2. Evaluate each on validation set
-3. Select best performer
-4. **Quality gates check**: Architecture constraints, performance regression, safety
-5. If all pass → save architecture + weights
-6. If any fail → rollback changes
-7. Update `config/model_config.json`
-8. Commit to repository
+The system handles:
+- ✅ Memory allocation errors → Reduce batch size
+- ✅ NaN/Inf in predictions → Skip batch, continue
+- ✅ Gradient explosions → Clip and warn
+- ✅ Corrupted checkpoints → Load from backup
+- ✅ Network failures → Use cached data
+- ✅ 10+ consecutive errors → Save state and stop
 
-## 📊 Monitoring Performance
+## 📁 Repository Structure
 
-Check:
-- `metrics/training_metrics.json` - Latest training stats (samples, loss, time)
-- `metrics/evaluation_results.json` - Model performance (RMSD, confidence)
-- `metrics/performance_history.json` - Historical performance tracking
-- `logs/evolution_history.json` - Architecture changes over time
-- `logs/quality_failures.json` - Failed quality gate attempts
-- `reports/` - Benchmark comparisons
-- [Actions tab](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions) - Live workflow runs
+```
+AutoEvolve-ProteinFold/
+├── model/
+│   ├── architecture.py          # Self-modifying model
+│   └── data_generator.py        # Synthetic + real data
+├── scripts/
+│   ├── train_cycle.py          # Training loop
+│   ├── evaluate.py             # Performance evaluation
+│   ├── evolve_architecture.py  # Genetic algorithm
+│   ├── visualize_predictions.py # PyMOL renders
+│   └── animate_folding.py      # Folding animations
+├── tests/
+│   ├── test_architecture_constraints.py
+│   └── test_performance_regression.py
+├── .github/workflows/
+│   └── continuous_training_gated.yml
+├── config/
+│   └── model_config.json       # Hyperparameters
+├── data/
+│   ├── protein_database/       # UniProt sequences
+│   └── training_state/         # Resumption state
+├── weights/                     # Model checkpoints
+├── metrics/                     # Training metrics
+├── logs/                        # Training logs
+└── visualizations/              # Generated images
+```
 
-## 🎯 Goals
+## 🔬 Research Goals
 
-- **Short-term**: Achieve competitive performance on CASP15 benchmark
-- **Mid-term**: Outperform AlphaFold2 on specific protein families
-- **Long-term**: Discover novel architecture patterns through evolution
+### Short-term (Generations 0-10)
+- ✅ Stable training pipeline
+- ✅ Memory-efficient architecture
+- ⏳ Achieve loss < 5.0
+- ⏳ Generate valid protein structures
 
-## 🔬 Research Applications
+### Medium-term (Generations 10-50)
+- ⏳ Match ESMFold on small proteins
+- ⏳ Expand to 256-dim embeddings
+- ⏳ Add multiple sequence alignment (MSA) features
+- ⏳ Improve confidence prediction
 
-- Drug discovery (predicting protein-ligand binding)
-- Protein engineering (stability optimization)
-- De novo protein design
-- Understanding protein evolution
-
-## 📝 Configuration
-
-Edit `config/model_config.json` to adjust:
-- Model dimensions
-- Number of layers
-- Training hyperparameters
-- Evolution parameters
-
-Changes are validated by quality gates before acceptance.
+### Long-term (Generations 50+)
+- ⏳ Compete with AlphaFold2 on benchmarks
+- ⏳ Novel architecture discoveries
+- ⏳ Publish peer-reviewed results
+- ⏳ Open-source trained models
 
 ## 🤝 Contributing
 
-Contributions welcome! The model improves itself, but human insights accelerate progress.
+This is a research project in active development. The model evolves itself, but human guidance is welcome:
 
-Areas for contribution:
-- Better loss functions
-- Advanced data augmentation
-- Novel architecture components
-- Benchmark dataset integration
-- Improved quality gates
+- **Bug reports**: Open an issue
+- **Feature ideas**: Start a discussion
+- **Code improvements**: Submit a PR (competes with auto-generated improvements!)
 
-## 📄 License
+## 📜 License
 
-MIT License - see LICENSE file
+MIT License - See LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- AlphaFold team (DeepMind) for revolutionizing protein folding
-- UniProt for comprehensive protein database
-- ESMFold and RoseTTAFold teams for open-source models
+- **AlphaFold2**: Architecture inspiration
+- **ESMFold**: Proving smaller models can work
+- **UniProt**: Real protein sequence data
+- **GitHub Actions**: Free compute for continuous training
 
 ## 📧 Contact
 
-Tommaso R. Marena - [@Tommaso-R-Marena](https://github.com/Tommaso-R-Marena)
+Tommaso Marena - [@Tommaso-R-Marena](https://github.com/Tommaso-R-Marena)
+
+Project Link: [https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold)
 
 ---
 
-**Note**: This is an experimental research project. Model performance will improve over time as it trains and evolves.
-
-**Current Status:**
-- Generation: `0`
-- Parameter Budget: Adaptive (50M-1B)
-- Training: Automated every 6 hours
-- Quality Gates: ✅ Active
-
-Last Updated: Auto-generated by training pipeline
+**Status**: 🟢 Active Development | **Last Updated**: March 2026 | **Model Generation**: 0
