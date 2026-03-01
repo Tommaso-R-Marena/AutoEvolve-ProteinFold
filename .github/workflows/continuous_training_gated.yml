@@ -20,7 +20,7 @@ jobs:
     
     - name: Pull LFS files
       run: |
-        git lfs pull
+        git lfs pull || true
     
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
@@ -42,6 +42,10 @@ jobs:
     - name: Pre-training validation
       run: |
         python tests/test_architecture_constraints.py || true
+    
+    - name: Create required directories
+      run: |
+        mkdir -p logs metrics weights data/training_state data/protein_database
     
     - name: Expand protein database
       run: |
