@@ -33,7 +33,7 @@ class ProteinFoldingLoss(nn.Module):
         )).mean()
         
         # Angle loss
-        angle_loss = F.mse_loss(
+        angle_loss = nn.functional.mse_loss(
             predictions['angles'] * mask.unsqueeze(-1),
             targets['angles'] * mask.unsqueeze(-1)
         )
@@ -44,7 +44,7 @@ class ProteinFoldingLoss(nn.Module):
             dim=-1
         ))
         target_confidence = torch.exp(-coord_error / 5.0)  # Exponential decay
-        confidence_loss = F.binary_cross_entropy(
+        confidence_loss = nn.functional.binary_cross_entropy(
             predictions['confidence'],
             target_confidence
         )
@@ -85,6 +85,23 @@ def train_cycle(args):
     # Data generator
     data_generator = ProteinDataGenerator()
     
+    # Try to fetch real data from UniProt
+    print("\nAttempting to fetch real protein data...")
+    real_data = data_generator.fetch_real_data_uniprot(n_samples=50)
+    
+    if real_data:
+        print(f"✓ Fetched {len(real_data)} real protein sequences from UniProt")
+        # Save data info for parameter budget calculation
+        data_info_path = Path('data/training_data_info.json')
+        data_info_path.parent.mkdir(exist_ok=True, parents=True)
+        with open(data_info_path, 'w') as f:
+            json.dump({
+                'real_sequences': len(real_data),
+                'last_updated': time.time()
+            }, f)
+    else:
+        print("Using synthetic data only")
+    
     # Optimizer with adaptive learning rate
     base_lr = 1e-4 * (0.95 ** model.generation)  # Decay with generation
     optimizer = optim.AdamW(model.parameters(), lr=base_lr, weight_decay=1e-5)
@@ -98,6 +115,7 @@ def train_cycle(args):
     
     epoch = 0
     best_loss = float('inf')
+    total_samples_seen = 0
     
     print(f"Starting training for {max_time} seconds...")
     
@@ -107,6 +125,7 @@ def train_cycle(args):
         
         # Generate training batch
         batch = data_generator.generate_synthetic_batch(args.batch_size)
+        total_samples_seen += args.batch_size
         
         # Move to device
         sequences = batch['sequences'].to(device)
@@ -139,6 +158,7 @@ def train_cycle(args):
             elapsed = time.time() - start_time
             print(f"Epoch {epoch} | Loss: {loss.item():.4f} | "
                   f"Coord: {loss_dict['coord_loss']:.4f} | "
+                  f"Samples: {total_samples_seen:,} | "
                   f"Time: {elapsed:.1f}s")
         
         # Save checkpoint periodically
@@ -147,7 +167,8 @@ def train_cycle(args):
             metadata = {
                 'epoch': epoch,
                 'loss': loss.item(),
-                'timestamp': time.time()
+                'timestamp': time.time(),
+                'total_samples': total_samples_seen
             }
             model.performance_history.append(metadata)
             
@@ -160,7 +181,8 @@ def train_cycle(args):
     model.save_checkpoint(str(checkpoint_path), {
         'final_epoch': epoch,
         'final_loss': loss.item(),
-        'total_time': time.time() - start_time
+        'total_time': time.time() - start_time,
+        'total_samples': total_samples_seen
     })
     
     # Save metrics
@@ -172,13 +194,19 @@ def train_cycle(args):
         'epochs': epoch,
         'final_loss': loss.item(),
         'best_loss': best_loss,
-        'training_time': time.time() - start_time
+        'training_time': time.time() - start_time,
+        'total_samples': total_samples_seen,
+        'samples_per_epoch': total_samples_seen / epoch if epoch > 0 else 0
     }
     
     with open(metrics_path, 'w') as f:
         json.dump(metrics, f, indent=2)
     
-    print(f"Training complete. Ran {epoch} epochs in {time.time() - start_time:.1f}s")
+    print(f"\nTraining complete:")
+    print(f"  Epochs: {epoch}")
+    print(f"  Samples processed: {total_samples_seen:,}")
+    print(f"  Time: {time.time() - start_time:.1f}s")
+    print(f"  Final loss: {loss.item():.4f}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
