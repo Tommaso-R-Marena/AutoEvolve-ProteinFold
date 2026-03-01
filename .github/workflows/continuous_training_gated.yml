@@ -1,0 +1,119 @@
+name: Gated Continuous Training
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  train-and-evolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-timeout
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "AutoEvolve Bot"
+        git config --global user.email "autoevolve@users.noreply.github.com"
+    
+    - name: Pre-training validation
+      run: |
+        python tests/test_architecture_constraints.py
+        python tests/test_quality_gates.py
+    
+    - name: Run training cycle
+      run: |
+        python scripts/train_cycle.py --mode continuous --max-time 18000
+    
+    - name: Evaluate model performance
+      id: evaluation
+      run: |
+        python scripts/evaluate.py --checkpoint latest
+        echo "evaluation_complete=true" >> $GITHUB_OUTPUT
+    
+    - name: Post-training quality gates
+      run: |
+        python tests/test_performance_regression.py --checkpoint latest
+    
+    - name: Architecture evolution (gated)
+      if: steps.evaluation.outputs.evaluation_complete == 'true'
+      run: |
+        python scripts/evolve_architecture.py --population-size 5 --generations 3
+    
+    - name: Validate evolved architecture
+      run: |
+        python tests/test_architecture_constraints.py
+        python tests/test_self_modification_safety.py
+    
+    - name: Run tests on evolved model
+      run: |
+        pytest tests/test_model.py -v --timeout=300
+    
+    - name: Final quality check before commit
+      id: quality_check
+      run: |
+        python tests/test_quality_gates.py --strict
+        if [ $? -eq 0 ]; then
+          echo "quality_passed=true" >> $GITHUB_OUTPUT
+        else
+          echo "quality_passed=false" >> $GITHUB_OUTPUT
+          echo "Quality gates failed - changes will not be committed"
+        fi
+    
+    - name: Commit and push improvements (only if quality gates pass)
+      if: steps.quality_check.outputs.quality_passed == 'true'
+      run: |
+        git add -A
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Auto-improvement: Training cycle $(date -u +%Y%m%d-%H%M%S) - Quality gates passed [skip ci]"
+          git push
+        fi
+    
+    - name: Rollback on quality failure
+      if: steps.quality_check.outputs.quality_passed == 'false'
+      run: |
+        git checkout -- .
+        echo "Changes rolled back due to quality gate failure"
+    
+    - name: Create issue on repeated failures
+      if: steps.quality_check.outputs.quality_passed == 'false'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'Quality Gates Failed in Auto-Training',
+            body: `Training cycle completed but quality gates failed. Changes were not committed.\n\nWorkflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            labels: ['automated', 'quality-gate-failure']
+          })
+    
+    - name: Upload training logs
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: training-logs-${{ github.run_number }}
+        path: |
+          logs/
+          metrics/
+        retention-days: 30
