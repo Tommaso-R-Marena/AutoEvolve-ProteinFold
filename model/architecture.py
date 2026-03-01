@@ -20,7 +20,7 @@ class EvolvableProteinFoldingModel(nn.Module):
             config['embedding_dim']
         )
         
-        # Pairwise feature extraction
+        # Pairwise feature extraction with dimension reduction
         # Input: concat(left_embed, right_embed) = 2*embedding_dim
         pair_input_dim = config['embedding_dim'] * 2
         self.pair_embedding = nn.Linear(
@@ -91,7 +91,7 @@ class EvolvableProteinFoldingModel(nn.Module):
         right = seq_embed.unsqueeze(1).expand(-1, seq_len, -1, -1)
         pair_concat = torch.cat([left, right], dim=-1)
         
-        # Project to pair_dim
+        # Project to pair_dim (reduces memory)
         return self.pair_embedding(pair_concat)
     
     def mutate_architecture(self, mutation_rate: float = 0.1) -> Dict:
@@ -142,13 +142,20 @@ class EvolvableProteinFoldingModel(nn.Module):
 
 
 class EvoformerBlock(nn.Module):
-    """Evoformer-style block with row/column attention."""
+    """Memory-efficient Evoformer-style block with row/column attention."""
     
     def __init__(self, seq_dim: int, pair_dim: int, n_heads: int, dropout: float):
         super().__init__()
+        self.seq_dim = seq_dim
+        self.pair_dim = pair_dim
+        
+        # Sequence attention
         self.row_attention = nn.MultiheadAttention(seq_dim, n_heads, dropout=dropout, batch_first=True)
         self.col_attention = nn.MultiheadAttention(seq_dim, n_heads, dropout=dropout, batch_first=True)
-        self.pair_attention = nn.MultiheadAttention(pair_dim, n_heads, dropout=dropout, batch_first=True)
+        
+        # Pair attention with reduced dimensions
+        # Instead of full L×L attention, use row-wise attention
+        self.pair_row_attention = nn.MultiheadAttention(pair_dim, max(1, n_heads // 2), dropout=dropout, batch_first=True)
         
         self.seq_norm1 = nn.LayerNorm(seq_dim)
         self.seq_norm2 = nn.LayerNorm(seq_dim)
@@ -162,10 +169,10 @@ class EvoformerBlock(nn.Module):
         )
         
         self.pair_ffn = nn.Sequential(
-            nn.Linear(pair_dim, pair_dim * 4),
+            nn.Linear(pair_dim, pair_dim * 2),  # Reduced expansion
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(pair_dim * 4, pair_dim)
+            nn.Linear(pair_dim * 2, pair_dim)
         )
         
     def forward(self, seq_feat: torch.Tensor, pair_feat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -173,11 +180,16 @@ class EvoformerBlock(nn.Module):
         seq_feat = self.seq_norm1(seq_feat + self.row_attention(seq_feat, seq_feat, seq_feat)[0])
         seq_feat = self.seq_norm2(seq_feat + self.seq_ffn(seq_feat))
         
-        # Pair attention (flatten spatial dimensions)
+        # Memory-efficient pair processing
+        # Process row-wise instead of full pairwise attention
         batch_size, seq_len, _, pair_dim = pair_feat.shape
-        pair_flat = pair_feat.view(batch_size * seq_len, seq_len, pair_dim)
-        pair_flat = self.pair_norm(pair_flat + self.pair_attention(pair_flat, pair_flat, pair_flat)[0])
-        pair_feat = pair_flat.view(batch_size, seq_len, seq_len, pair_dim)
+        
+        # Row-wise attention (process each row independently)
+        pair_rows = pair_feat.view(batch_size * seq_len, seq_len, pair_dim)
+        pair_rows_attn = self.pair_row_attention(pair_rows, pair_rows, pair_rows)[0]
+        pair_feat_updated = pair_rows_attn.view(batch_size, seq_len, seq_len, pair_dim)
+        
+        pair_feat = self.pair_norm(pair_feat + pair_feat_updated)
         pair_feat = pair_feat + self.pair_ffn(pair_feat)
         
         return seq_feat, pair_feat

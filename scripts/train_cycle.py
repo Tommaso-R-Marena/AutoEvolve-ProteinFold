@@ -123,6 +123,9 @@ def train_cycle(args):
     
     model = model.to(device)
     
+    # Get max sequence length from config
+    max_seq_len = model.config.get('max_sequence_length', 256)
+    
     # Data generator
     data_generator = ProteinDataGenerator()
     
@@ -179,14 +182,19 @@ def train_cycle(args):
     epoch = start_epoch
     
     print(f"\nStarting training for {max_time} seconds...")
-    print(f"Will save state every 100 epochs for seamless resumption\n")
+    print(f"Will save state every 100 epochs for seamless resumption")
+    print(f"Max sequence length: {max_seq_len}\n")
     
     while time.time() - start_time < max_time:
         epoch += 1
         model.train()
         
-        # Generate training batch
-        batch = data_generator.generate_synthetic_batch(args.batch_size)
+        # Generate training batch with limited sequence length
+        batch = data_generator.generate_synthetic_batch(
+            args.batch_size,
+            min_len=30,
+            max_len=min(max_seq_len, 200)  # Cap at max_seq_len or 200
+        )
         total_samples_seen += args.batch_size
         
         # Move to device
@@ -199,7 +207,17 @@ def train_cycle(args):
         
         # Forward pass
         optimizer.zero_grad()
-        predictions = model(sequences)
+        
+        try:
+            predictions = model(sequences)
+        except RuntimeError as e:
+            if "allocate memory" in str(e):
+                print(f"\n⚠️  Memory error at epoch {epoch}. Reducing batch size and continuing...")
+                # Reduce batch size for this iteration
+                args.batch_size = max(1, args.batch_size // 2)
+                continue
+            else:
+                raise
         
         # Compute loss
         targets = {
@@ -306,7 +324,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, default='continuous')
     parser.add_argument('--max-time', type=int, default=18000)
-    parser.add_argument('--batch-size', type=int, default=8)
+    parser.add_argument('--batch-size', type=int, default=4)  # Reduced from 8
     parser.add_argument('--resume', action='store_true',
                        help='Resume from saved training state')
     args = parser.parse_args()
