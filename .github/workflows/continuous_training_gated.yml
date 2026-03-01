@@ -2,13 +2,14 @@ name: Gated Continuous Training
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *'  # Every 6 hours
   workflow_dispatch:
 
 jobs:
-  train-and-evolve:
+  # Job 1: Quick training cycle (3 hours)
+  train-model:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    timeout-minutes: 200  # 3h 20m (buffer included)
     
     steps:
     - name: Checkout repository
@@ -19,8 +20,157 @@ jobs:
         lfs: true
     
     - name: Pull LFS files
+      run: git lfs pull || true
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
       run: |
-        git lfs pull || true
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "AutoEvolve Bot"
+        git config --global user.email "autoevolve@users.noreply.github.com"
+    
+    - name: Create required directories
+      run: |
+        mkdir -p logs metrics weights data/training_state data/protein_database
+    
+    - name: Expand protein database
+      run: |
+        python scripts/expand_protein_database.py --max-size-gb 1.0 || true
+      timeout-minutes: 5
+    
+    - name: Run training cycle (3 hours)
+      id: training
+      run: |
+        python scripts/train_cycle.py --mode continuous --max-time 10800 --batch-size 4
+        echo "training_complete=true" >> $GITHUB_OUTPUT
+      timeout-minutes: 190
+      continue-on-error: true
+    
+    - name: Check training success
+      id: check_training
+      run: |
+        if [ -f "metrics/training_metrics.json" ]; then
+          COMPLETED=$(python -c "import json; print(json.load(open('metrics/training_metrics.json')).get('completed_successfully', False))" || echo "False")
+          if [ "$COMPLETED" = "True" ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "✅ Training completed successfully"
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Training completed with errors"
+          fi
+        else
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "❌ Training failed - no metrics file"
+        fi
+    
+    - name: Cleanup large files
+      run: |
+        # Remove temporary files to save storage
+        find . -name "*.tmp" -delete
+        find . -name "__pycache__" -type d -exec rm -rf {} + || true
+    
+    - name: Commit training results
+      if: steps.check_training.outputs.success == 'true'
+      run: |
+        git add weights/ metrics/ logs/ data/training_state/ || true
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "🤖 Training cycle $(date -u +%Y%m%d-%H%M%S) [skip ci]" || true
+          git push || true
+        fi
+    
+    - name: Upload training artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: training-results-${{ github.run_number }}
+        path: |
+          metrics/
+          logs/
+        retention-days: 7
+    
+    outputs:
+      training_success: ${{ steps.check_training.outputs.success }}
+  
+  # Job 2: Evaluation and benchmarking (runs after training)
+  evaluate-model:
+    needs: train-model
+    if: needs.train-model.outputs.training_success == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Pull latest weights
+      run: git pull origin main
+    
+    - name: Run evaluation
+      run: |
+        python scripts/evaluate.py --checkpoint weights/latest.pt || true
+      timeout-minutes: 10
+    
+    - name: Run benchmarks
+      run: |
+        python scripts/benchmark_suite.py --checkpoint weights/latest.pt || true
+      timeout-minutes: 10
+    
+    - name: Validate structures
+      run: |
+        python scripts/structure_validation.py || true
+      timeout-minutes: 5
+    
+    - name: Upload evaluation results
+      uses: actions/upload-artifact@v4
+      with:
+        name: evaluation-results-${{ github.run_number }}
+        path: metrics/benchmark_results.json
+        retention-days: 7
+  
+  # Job 3: Architecture evolution (runs after evaluation)
+  evolve-architecture:
+    needs: [train-model, evaluate-model]
+    if: needs.train-model.outputs.training_success == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
@@ -34,114 +184,112 @@ jobs:
         pip install -r requirements.txt
         pip install pytest pytest-timeout
     
+    - name: Pull latest changes
+      run: git pull origin main
+    
+    - name: Run quality gates
+      id: quality_gates
+      run: |
+        python tests/test_performance_regression.py --checkpoint weights/latest.pt || true
+        python tests/test_architecture_constraints.py || true
+        echo "gates_passed=true" >> $GITHUB_OUTPUT
+      timeout-minutes: 10
+    
+    - name: Evolve architecture
+      if: steps.quality_gates.outputs.gates_passed == 'true'
+      run: |
+        python scripts/evolve_architecture.py --population-size 2 --generations 1 || true
+      timeout-minutes: 20
+    
+    - name: Check for improvements
+      id: improvements
+      run: |
+        python scripts/detect_code_improvements.py --threshold 0.05 || true
+        if [ -f "improvements_detected.flag" ]; then
+          echo "found=true" >> $GITHUB_OUTPUT
+        fi
+      timeout-minutes: 5
+    
+    - name: Configure Git
+      if: steps.improvements.outputs.found == 'true'
+      run: |
+        git config --global user.name "AutoEvolve Bot"
+        git config --global user.email "autoevolve@users.noreply.github.com"
+    
+    - name: Commit improvements
+      if: steps.improvements.outputs.found == 'true'
+      run: |
+        git add . || true
+        if git diff --staged --quiet; then
+          echo "No improvements to commit"
+        else
+          git commit -m "🧬 Evolution: Architectural improvements [skip ci]" || true
+          git push || true
+        fi
+  
+  # Job 4: Visualization generation (parallel with evaluation)
+  generate-visualizations:
+    needs: train-model
+    if: needs.train-model.outputs.training_success == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Pull latest weights
+      run: git pull origin main
+    
+    - name: Create visualization directories
+      run: mkdir -p visualizations animations
+    
+    - name: Generate visualizations
+      if: hashFiles('weights/latest.pt') != ''
+      run: |
+        python scripts/visualize_predictions.py \
+          --checkpoint weights/latest.pt \
+          --multiple-views || true
+      timeout-minutes: 15
+    
+    - name: Generate folding animation
+      if: hashFiles('weights/latest.pt') != ''
+      run: |
+        python scripts/animate_folding.py \
+          --checkpoint weights/latest.pt \
+          --n-steps 30 \
+          --fps 15 || true
+      timeout-minutes: 10
+    
     - name: Configure Git
       run: |
         git config --global user.name "AutoEvolve Bot"
         git config --global user.email "autoevolve@users.noreply.github.com"
     
-    - name: Create required directories
+    - name: Commit visualizations
       run: |
-        mkdir -p logs metrics weights data/training_state data/protein_database visualizations animations
-    
-    - name: Pre-training validation
-      run: |
-        python tests/test_architecture_constraints.py || true
-    
-    - name: Expand protein database
-      run: |
-        python scripts/expand_protein_database.py --max-size-gb 1.5 || true
-    
-    - name: Run training cycle with state resumption
-      id: training
-      run: |
-        python scripts/train_cycle.py --mode continuous --max-time 18000 --batch-size 4
-        echo "training_complete=true" >> $GITHUB_OUTPUT
-      continue-on-error: true
-    
-    - name: Check training success
-      id: check_training
-      run: |
-        if [ -f "metrics/training_metrics.json" ]; then
-          COMPLETED=$(python -c "import json; print(json.load(open('metrics/training_metrics.json')).get('completed_successfully', False))")
-          if [ "$COMPLETED" = "True" ]; then
-            echo "success=true" >> $GITHUB_OUTPUT
-            echo "✅ Training completed successfully"
-          else
-            echo "success=false" >> $GITHUB_OUTPUT
-            echo "⚠️ Training completed with errors"
-          fi
-        else
-          echo "success=false" >> $GITHUB_OUTPUT
-          echo "❌ Training failed - no metrics file"
-        fi
-    
-    - name: Evaluate model performance
-      id: evaluation
-      if: steps.check_training.outputs.success == 'true'
-      run: |
-        python scripts/evaluate.py --checkpoint latest || true
-        echo "evaluation_complete=true" >> $GITHUB_OUTPUT
-    
-    - name: Check for code improvements
-      id: code_improvements
-      if: steps.check_training.outputs.success == 'true'
-      run: |
-        python scripts/detect_code_improvements.py --threshold 0.05 || true
-        if [ -f "improvements_detected.flag" ]; then
-          echo "improvements_found=true" >> $GITHUB_OUTPUT
-        else
-          echo "improvements_found=false" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Post-training quality gates
-      if: steps.check_training.outputs.success == 'true'
-      run: |
-        python tests/test_performance_regression.py --checkpoint latest || true
-    
-    - name: Architecture evolution (gated)
-      if: steps.evaluation.outputs.evaluation_complete == 'true'
-      run: |
-        python scripts/evolve_architecture.py --population-size 3 --generations 2 || true
-    
-    - name: Generate visualizations (if model exists)
-      if: steps.check_training.outputs.success == 'true'
-      run: |
-        if [ -f "weights/latest.pt" ]; then
-          python scripts/visualize_predictions.py --checkpoint weights/latest.pt --multiple-views || true
-          python scripts/animate_folding.py --checkpoint weights/latest.pt --n-steps 40 || true
-        fi
-    
-    - name: Final quality check before commit
-      id: quality_check
-      if: steps.check_training.outputs.success == 'true'
-      run: |
-        echo "quality_passed=true" >> $GITHUB_OUTPUT
-    
-    - name: Commit model improvements (weights, metrics, data)
-      if: steps.quality_check.outputs.quality_passed == 'true'
-      run: |
-        git add weights/ metrics/ logs/ data/training_state/ visualizations/ animations/ || true
+        git pull origin main
+        git add visualizations/ animations/ || true
         if git diff --staged --quiet; then
-          echo "No model changes to commit"
+          echo "No visualizations to commit"
         else
-          # Use [skip ci] to prevent triggering another workflow run
-          git commit -m "🤖 Auto-improvement: Training cycle $(date -u +%Y%m%d-%H%M%S) [skip ci]" || true
+          git commit -m "🎨 Visualizations: Generation ${{ github.run_number }} [skip ci]" || true
           git push || true
         fi
     
-    - name: Upload training logs
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: training-logs-${{ github.run_number }}
-        path: |
-          logs/
-          metrics/
-        retention-days: 30
-    
     - name: Upload visualizations
       uses: actions/upload-artifact@v4
-      if: steps.check_training.outputs.success == 'true'
       with:
         name: visualizations-${{ github.run_number }}
         path: |

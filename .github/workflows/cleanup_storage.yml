@@ -1,0 +1,130 @@
+name: Storage Cleanup
+
+# Run weekly to keep under 500MB limit
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Every Sunday at midnight
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        lfs: true
+    
+    - name: Clean old artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const days = 7;
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          // Get all artifacts
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner,
+            repo,
+            per_page: 100
+          });
+          
+          const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+          
+          for (const artifact of artifacts.data.artifacts) {
+            if (new Date(artifact.created_at).getTime() < cutoff) {
+              console.log(`Deleting artifact ${artifact.name} (${artifact.size_in_bytes} bytes)`);
+              await github.rest.actions.deleteArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id
+              });
+            }
+          }
+    
+    - name: Clean old workflow runs
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const days = 30;
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          const runs = await github.rest.actions.listWorkflowRunsForRepo({
+            owner,
+            repo,
+            status: 'completed',
+            per_page: 100
+          });
+          
+          const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+          
+          for (const run of runs.data.workflow_runs) {
+            if (new Date(run.created_at).getTime() < cutoff) {
+              console.log(`Deleting workflow run ${run.id}`);
+              await github.rest.actions.deleteWorkflowRun({
+                owner,
+                repo,
+                run_id: run.id
+              });
+            }
+          }
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "AutoEvolve Bot"
+        git config --global user.email "autoevolve@users.noreply.github.com"
+    
+    - name: Clean old training checkpoints
+      run: |
+        # Keep only latest 3 checkpoints
+        cd weights
+        ls -t *.pt 2>/dev/null | tail -n +4 | xargs -r rm --
+        cd ..
+    
+    - name: Clean old visualizations
+      run: |
+        # Keep only latest 5 visualization sets
+        if [ -d "visualizations" ]; then
+          cd visualizations
+          ls -t *.png 2>/dev/null | tail -n +6 | xargs -r rm --
+          cd ..
+        fi
+    
+    - name: Clean old logs
+      run: |
+        # Keep only latest 10 log files
+        if [ -d "logs" ]; then
+          cd logs
+          ls -t *.log 2>/dev/null | tail -n +11 | xargs -r rm --
+          cd ..
+        fi
+    
+    - name: Commit cleanup
+      run: |
+        git add .
+        if git diff --staged --quiet; then
+          echo "No cleanup needed"
+        else
+          git commit -m "🧹 Storage cleanup: Removed old artifacts [skip ci]" || true
+          git push || true
+        fi
+    
+    - name: Report storage usage
+      run: |
+        echo "📊 Current repository size:"
+        du -sh .
+        echo ""
+        echo "📁 Weights directory:"
+        du -sh weights/ 2>/dev/null || echo "No weights directory"
+        echo ""
+        echo "🎨 Visualizations directory:"
+        du -sh visualizations/ 2>/dev/null || echo "No visualizations directory"
+        echo ""
+        echo "📝 Logs directory:"
+        du -sh logs/ 2>/dev/null || echo "No logs directory"

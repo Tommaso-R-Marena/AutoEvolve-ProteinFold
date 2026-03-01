@@ -1,0 +1,72 @@
+name: Emergency Stop
+
+# Manual trigger to stop all training if issues occur
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for emergency stop'
+        required: true
+        default: 'Manual intervention required'
+
+jobs:
+  emergency-stop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Cancel all running workflows
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          // Get all in-progress runs
+          const runs = await github.rest.actions.listWorkflowRunsForRepo({
+            owner,
+            repo,
+            status: 'in_progress',
+            per_page: 100
+          });
+          
+          for (const run of runs.data.workflow_runs) {
+            if (run.id !== context.runId) {  // Don't cancel ourselves
+              console.log(`Cancelling workflow run ${run.id}: ${run.name}`);
+              await github.rest.actions.cancelWorkflowRun({
+                owner,
+                repo,
+                run_id: run.id
+              });
+            }
+          }
+    
+    - name: Create emergency stop flag
+      run: |
+        mkdir -p .github
+        echo "EMERGENCY_STOP=true" > .github/emergency_stop.flag
+        echo "REASON=${{ github.event.inputs.reason }}" >> .github/emergency_stop.flag
+        echo "TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .github/emergency_stop.flag
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "AutoEvolve Bot"
+        git config --global user.email "autoevolve@users.noreply.github.com"
+    
+    - name: Commit emergency stop
+      run: |
+        git add .github/emergency_stop.flag
+        git commit -m "🚨 EMERGENCY STOP: ${{ github.event.inputs.reason }} [skip ci]"
+        git push
+    
+    - name: Summary
+      run: |
+        echo "🚨 Emergency stop activated"
+        echo "Reason: ${{ github.event.inputs.reason }}"
+        echo "All running workflows have been cancelled"
+        echo "Training will not resume until emergency_stop.flag is removed"
