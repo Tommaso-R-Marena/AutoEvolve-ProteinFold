@@ -1,0 +1,82 @@
+name: Generate Visualizations
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence:
+        description: 'Protein sequence to visualize (optional)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 12 * * 0'  # Weekly on Sunday at noon
+
+jobs:
+  visualize:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        lfs: true
+    
+    - name: Pull LFS files
+      run: git lfs pull
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        sudo apt-get update
+        sudo apt-get install -y pymol
+    
+    - name: Generate structure visualizations
+      run: |
+        if [ -f "weights/latest.pt" ]; then
+          python scripts/visualize_predictions.py \
+            --checkpoint weights/latest.pt \
+            --output-dir visualizations \
+            --multiple-views \
+            --web
+        else
+          echo "No checkpoint available yet"
+        fi
+    
+    - name: Generate folding animation
+      run: |
+        if [ -f "weights/latest.pt" ]; then
+          python scripts/animate_folding.py \
+            --checkpoint weights/latest.pt \
+            --output-dir animations \
+            --n-steps 60 \
+            --fps 15
+        else
+          echo "No checkpoint available yet"
+        fi
+    
+    - name: Commit visualizations
+      run: |
+        git config --global user.name "Visualization Bot"
+        git config --global user.email "viz@users.noreply.github.com"
+        git add visualizations/ animations/
+        if git diff --staged --quiet; then
+          echo "No new visualizations to commit"
+        else
+          git commit -m "Auto-generated visualizations $(date -u +%Y%m%d)" || true
+          git push || true
+        fi
+    
+    - name: Upload visualization artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: visualizations-${{ github.run_number }}
+        path: |
+          visualizations/
+          animations/
+        retention-days: 90

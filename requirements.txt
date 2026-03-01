@@ -8,3 +8,7 @@ pandas>=2.0.0
 tqdm>=4.65.0
 tensorboard>=2.13.0
 einops>=0.6.1
+pymol-open-source>=3.0.0
+pillow>=10.0.0
+imageio>=2.31.0
+py3Dmol>=2.0.0
