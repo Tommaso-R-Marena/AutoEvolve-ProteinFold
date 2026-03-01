@@ -1,0 +1,57 @@
+name: Weekly Benchmark Against SOTA
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install -r requirements-benchmark.txt
+    
+    - name: Download benchmark datasets
+      run: |
+        python scripts/download_benchmark_data.py --datasets CASP15 CAMEO
+    
+    - name: Run comprehensive benchmark
+      run: |
+        python scripts/benchmark.py --compare-to alphafold2 esmfold rosettafold
+    
+    - name: Generate comparison report
+      run: |
+        python scripts/generate_comparison.py --output reports/benchmark_$(date -u +%Y%m%d).md
+    
+    - name: Commit benchmark results
+      run: |
+        git config --global user.name "Benchmark Bot"
+        git config --global user.email "benchmark@users.noreply.github.com"
+        git add reports/
+        git commit -m "Weekly benchmark results $(date -u +%Y%m%d)" || true
+        git push || true
+    
+    - name: Create issue if performance degrades
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'Performance Degradation Detected',
+            body: 'Automated benchmark detected performance issues. Check the latest workflow run.',
+            labels: ['automated', 'performance']
+          })

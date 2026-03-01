@@ -1,0 +1,5 @@
+# Additional requirements for benchmarking
+prody>=2.4.0
+mdtraj>=1.9.7
+pymol-open-source>=2.5.0
+tm-tools>=0.1.0

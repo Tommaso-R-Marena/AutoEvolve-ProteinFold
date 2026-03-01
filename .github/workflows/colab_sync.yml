@@ -1,0 +1,44 @@
+name: Colab Training Sync
+
+on:
+  repository_dispatch:
+    types: [colab-training-complete]
+  workflow_dispatch:
+    inputs:
+      commit_message:
+        description: 'Commit message for Colab updates'
+        required: false
+        default: 'Sync from Colab training session'
+
+jobs:
+  sync-colab-weights:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "Colab Sync Bot"
+        git config --global user.email "colabsync@users.noreply.github.com"
+    
+    - name: Pull latest changes
+      run: |
+        git pull origin main
+    
+    - name: Verify weight files
+      run: |
+        python scripts/verify_weights.py --checkpoint weights/latest.pt
+    
+    - name: Update metadata
+      run: |
+        python scripts/update_metadata.py --source colab
+    
+    - name: Commit changes
+      run: |
+        git add -A
+        git commit -m "${{ github.event.inputs.commit_message || 'Sync from Colab training session' }}" || echo "No changes"
+        git push
