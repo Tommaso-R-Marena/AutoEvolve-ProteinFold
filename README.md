@@ -9,11 +9,11 @@
 
 AutoEvolve-ProteinFold is a novel approach to protein structure prediction that continuously improves itself through:
 
-- **Automated Training Cycles**: GitHub Actions runs training every 6 hours
+- **Automated Training Cycles**: GitHub Actions runs training every 6 hours (5h 40m per cycle)
 - **Evolutionary Architecture Search**: Model architecture evolves based on performance
 - **Self-Modifying Weights**: Model saves improved weights back to the repository
 - **Google Colab Integration**: Extended training sessions with GPU acceleration
-- **Real & Synthetic Data**: Fetches from UniProt/AlphaFold APIs + generates realistic synthetic data
+- **Real & Synthetic Data**: Fetches from UniProt/AlphaFold APIs (no keys needed!) + generates realistic synthetic data
 - **Continuous Benchmarking**: Weekly comparison against AlphaFold2, ESMFold, RoseTTAFold
 
 ## 🧬 Key Features
@@ -49,6 +49,16 @@ The model can modify its own:
 - Attention heads
 - Processing pipeline
 
+## ⏱️ Workflow Duration
+
+**GitHub Actions Free Tier**: Each workflow can run up to **6 hours**. The training workflow is configured for:
+- **5 hours 40 minutes** of actual training
+- **20 minutes** buffer for setup, evaluation, evolution, and pushing
+- Runs **every 6 hours** automatically
+- **~57 hours of training per week** completely automated!
+
+**No action needed from you** - it runs autonomously once enabled.
+
 ## 🔧 Setup
 
 ### Local Development
@@ -62,23 +72,28 @@ python scripts/train_cycle.py --mode continuous --max-time 3600
 ```
 
 ### Google Colab Training
-1. Open `colab/AutoEvolve_ProteinFold_Colab.ipynb` in [Google Colab](https://colab.research.google.com)
-2. Add your GitHub Personal Access Token to Colab Secrets (name: `GITHUB_TOKEN`)
+1. Open `colab/AutoEvolve_ProteinFold_Colab.ipynb` in [Google Colab](https://colab.research.google.com/github/Tommaso-R-Marena/AutoEvolve-ProteinFold/blob/main/colab/AutoEvolve_ProteinFold_Colab.ipynb)
+2. Add your GitHub Personal Access Token to Colab Secrets:
+   - Click the key icon (🔑) in the left sidebar
+   - Add secret: Name = `GITHUB_TOKEN`, Value = your token
+   - [Create token here](https://github.com/settings/tokens) (needs `repo` scope)
 3. Run all cells to train and auto-sync weights
 
 ### GitHub Actions (Automated)
 
-The repository automatically trains every 6 hours via GitHub Actions. No manual intervention required!
+The repository automatically trains every 6 hours via GitHub Actions. **No manual intervention required!**
 
 Workflows:
-- `continuous_training.yml`: Trains model, evolves architecture, commits improvements
+- `continuous_training.yml`: Trains model (5h40m), evolves architecture, commits improvements
 - `colab_sync.yml`: Syncs weights from Colab training sessions
 - `benchmark.yml`: Weekly performance evaluation against SOTA models
 
+**To enable workflows**: Go to the [Actions tab](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions) and enable workflows if prompted.
+
 ## 📈 Training Data Sources
 
-1. **UniProt API**: Fetches reviewed protein sequences
-2. **AlphaFold Database**: Downloads predicted structures
+1. **UniProt API**: Fetches reviewed protein sequences (no API key required!)
+2. **AlphaFold Database**: Downloads predicted structures (public access)
 3. **Synthetic Generation**: Creates physically plausible sequences with realistic:
    - Amino acid frequency distributions
    - Bond lengths (~3.8Å C-alpha distance)
@@ -101,6 +116,7 @@ Check:
 - `metrics/evaluation_results.json` - Model performance
 - `logs/evolution_history.json` - Architecture changes over time
 - `reports/` - Benchmark comparisons
+- [Actions tab](https://github.com/Tommaso-R-Marena/AutoEvolve-ProteinFold/actions) - Live workflow runs
 
 ## 🎯 Goals
 
