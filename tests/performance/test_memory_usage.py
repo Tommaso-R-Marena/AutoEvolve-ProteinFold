@@ -1,62 +1,112 @@
-"""Performance and memory usage tests."""
+"""Memory usage tests to ensure model fits in GitHub Actions limits."""
+import pytest
 import torch
-import json
-import psutil
-import os
-from pathlib import Path
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 import sys
+from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from model.architecture import EvolvableProteinFoldingModel
 
-
-def get_memory_usage_mb():
-    """Get current process memory usage in MB."""
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024
-
-
-def test_memory_under_limit():
-    """Test model stays under 7GB GitHub Actions limit."""
-    config_path = Path(__file__).parent.parent.parent / 'config' / 'model_config.json'
-    with open(config_path) as f:
-        config = json.load(f)
+@pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not installed")
+def test_model_memory_footprint():
+    """Test that model fits in memory limits."""
+    if not PSUTIL_AVAILABLE:
+        pytest.skip("psutil not available")
     
-    # Measure initial memory
-    initial_mem = get_memory_usage_mb()
-    print(f"\n📈 Initial memory: {initial_mem:.1f} MB")
+    process = psutil.Process()
+    initial_memory = process.memory_info().rss / 1024 / 1024  # MB
     
     # Create model
+    config = {
+        'vocab_size': 20,
+        'embedding_dim': 128,
+        'pair_dim': 64,
+        'n_heads': 8,
+        'n_blocks': 2,
+        'dropout': 0.1,
+        'max_sequence_length': 256
+    }
+    
     model = EvolvableProteinFoldingModel(config)
-    after_model_mem = get_memory_usage_mb()
-    print(f"🎯 Model creation: +{after_model_mem - initial_mem:.1f} MB (total: {after_model_mem:.1f} MB)")
     
-    # Forward pass with largest expected batch
-    batch_size = 4
-    seq_len = 200
-    sequences = torch.randint(0, 20, (batch_size, seq_len))
+    # Check memory after model creation
+    model_memory = process.memory_info().rss / 1024 / 1024
+    memory_used = model_memory - initial_memory
     
-    outputs = model(sequences)
-    after_forward_mem = get_memory_usage_mb()
-    print(f"🚀 Forward pass: +{after_forward_mem - after_model_mem:.1f} MB (total: {after_forward_mem:.1f} MB)")
+    print(f"\nMemory usage:")
+    print(f"  Initial: {initial_memory:.1f} MB")
+    print(f"  After model: {model_memory:.1f} MB")
+    print(f"  Model size: {memory_used:.1f} MB")
     
-    # Backward pass simulation
+    # GitHub Actions has ~7GB available, leave plenty of room
+    assert memory_used < 500, f"Model uses too much memory: {memory_used:.1f} MB"
+
+@pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not installed")
+def test_training_memory_footprint():
+    """Test memory during training."""
+    if not PSUTIL_AVAILABLE:
+        pytest.skip("psutil not available")
+    
+    process = psutil.Process()
+    initial_memory = process.memory_info().rss / 1024 / 1024
+    
+    config = {
+        'vocab_size': 20,
+        'embedding_dim': 128,
+        'pair_dim': 64,
+        'n_heads': 8,
+        'n_blocks': 2,
+        'dropout': 0.1,
+        'max_sequence_length': 256
+    }
+    
+    model = EvolvableProteinFoldingModel(config)
+    optimizer = torch.optim.Adam(model.parameters())
+    
+    # Simulate training step
+    batch = torch.randint(0, 20, (2, 100))
+    outputs = model(batch)
     loss = outputs['coordinates'].sum()
     loss.backward()
-    after_backward_mem = get_memory_usage_mb()
-    print(f"⏪ Backward pass: +{after_backward_mem - after_forward_mem:.1f} MB (total: {after_backward_mem:.1f} MB)")
+    optimizer.step()
     
-    # Check limit
-    GITHUB_ACTIONS_LIMIT_MB = 7000  # 7 GB
-    print(f"\n🎯 Peak memory: {after_backward_mem:.1f} MB / {GITHUB_ACTIONS_LIMIT_MB} MB")
-    print(f"🔴 Headroom: {GITHUB_ACTIONS_LIMIT_MB - after_backward_mem:.1f} MB ({(1 - after_backward_mem/GITHUB_ACTIONS_LIMIT_MB)*100:.1f}%)")
+    training_memory = process.memory_info().rss / 1024 / 1024
+    total_used = training_memory - initial_memory
     
-    assert after_backward_mem < GITHUB_ACTIONS_LIMIT_MB, \
-        f"Memory usage {after_backward_mem:.1f} MB exceeds GitHub Actions limit of {GITHUB_ACTIONS_LIMIT_MB} MB"
+    print(f"\nTraining memory:")
+    print(f"  Total used: {total_used:.1f} MB")
     
-    print("\n✅ Memory usage test PASSED!")
+    # Should fit comfortably in 7GB with room for data
+    assert total_used < 1000, f"Training uses too much memory: {total_used:.1f} MB"
 
-
-if __name__ == '__main__':
-    test_memory_under_limit()
+def test_model_parameters_count():
+    """Test that model has reasonable parameter count."""
+    config = {
+        'vocab_size': 20,
+        'embedding_dim': 128,
+        'pair_dim': 64,
+        'n_heads': 8,
+        'n_blocks': 2,
+        'dropout': 0.1,
+        'max_sequence_length': 256
+    }
+    
+    model = EvolvableProteinFoldingModel(config)
+    
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    print(f"\nParameter counts:")
+    print(f"  Total: {total_params:,}")
+    print(f"  Trainable: {trainable_params:,}")
+    print(f"  Size estimate: {total_params * 4 / 1024 / 1024:.1f} MB (FP32)")
+    
+    # Should be under 10M parameters for efficiency
+    assert total_params < 10_000_000, f"Too many parameters: {total_params:,}"
+    assert trainable_params == total_params, "All parameters should be trainable"

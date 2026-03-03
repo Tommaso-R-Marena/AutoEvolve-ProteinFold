@@ -15,6 +15,12 @@ seaborn>=0.12.0
 tqdm>=4.65.0
 pyyaml>=6.0
 
+# Testing (needed for CI)
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-timeout>=2.4.0
+psutil>=5.9.0
+
 # Optional but recommended
 # pymol-open-source>=2.5.0  # For structure visualization
 # py3Dmol>=2.0.0  # For interactive 3D visualization
