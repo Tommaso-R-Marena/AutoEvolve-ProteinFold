@@ -13,6 +13,19 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from model.architecture import EvolvableProteinFoldingModel
 
+def get_test_config():
+    """Get standard test configuration."""
+    return {
+        'vocab_size': 20,
+        'embedding_dim': 128,
+        'pair_dim': 64,
+        'n_heads': 8,
+        'n_blocks': 2,
+        'n_structure_blocks': 3,
+        'dropout': 0.1,
+        'max_sequence_length': 256
+    }
+
 @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not installed")
 def test_model_memory_footprint():
     """Test that model fits in memory limits."""
@@ -23,16 +36,7 @@ def test_model_memory_footprint():
     initial_memory = process.memory_info().rss / 1024 / 1024  # MB
     
     # Create model
-    config = {
-        'vocab_size': 20,
-        'embedding_dim': 128,
-        'pair_dim': 64,
-        'n_heads': 8,
-        'n_blocks': 2,
-        'dropout': 0.1,
-        'max_sequence_length': 256
-    }
-    
+    config = get_test_config()
     model = EvolvableProteinFoldingModel(config)
     
     # Check memory after model creation
@@ -56,16 +60,7 @@ def test_training_memory_footprint():
     process = psutil.Process()
     initial_memory = process.memory_info().rss / 1024 / 1024
     
-    config = {
-        'vocab_size': 20,
-        'embedding_dim': 128,
-        'pair_dim': 64,
-        'n_heads': 8,
-        'n_blocks': 2,
-        'dropout': 0.1,
-        'max_sequence_length': 256
-    }
-    
+    config = get_test_config()
     model = EvolvableProteinFoldingModel(config)
     optimizer = torch.optim.Adam(model.parameters())
     
@@ -87,16 +82,7 @@ def test_training_memory_footprint():
 
 def test_model_parameters_count():
     """Test that model has reasonable parameter count."""
-    config = {
-        'vocab_size': 20,
-        'embedding_dim': 128,
-        'pair_dim': 64,
-        'n_heads': 8,
-        'n_blocks': 2,
-        'dropout': 0.1,
-        'max_sequence_length': 256
-    }
-    
+    config = get_test_config()
     model = EvolvableProteinFoldingModel(config)
     
     total_params = sum(p.numel() for p in model.parameters())
