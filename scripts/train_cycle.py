@@ -270,10 +270,11 @@ def fetch_real_protein_structures(data_generator, real_protein_data, max_structu
                 break
                 
             try:
-                # Extract UniProt ID from the ID field (format: sp|P12345|NAME)
-                uniprot_id = protein['id'].split('|')[1] if '|' in protein['id'] else protein['id']
+                # Use the 'id' field directly (already clean)
+                uniprot_id = protein['id']
+                organism = protein.get('organism_id', 'unknown')
                 
-                print(f"  Fetching {i+1}/{min(len(real_protein_data), max_structures)}: {uniprot_id}...", end=' ')
+                print(f"  Fetching {i+1}/{min(len(real_protein_data), max_structures)}: {uniprot_id} [{organism}]...", end=' ')
                 
                 coords = data_generator.fetch_alphafold_structure(uniprot_id)
                 
@@ -285,7 +286,7 @@ def fetch_real_protein_structures(data_generator, real_protein_data, max_structu
                     print("❌ Not found")
                     
                 # Rate limiting - be nice to AlphaFold servers
-                time.sleep(0.5)
+                time.sleep(0.3)
                 
             except Exception as e:
                 print(f"❌ Error: {e}")
@@ -338,23 +339,34 @@ def train_cycle(args):
         # Data generator
         data_generator = ProteinDataGenerator()
         
-        # Try to fetch real data from UniProt
+        # Try to fetch real data from UniProt with HIGH-COVERAGE organisms
         real_protein_data = []
-        print("\n🌐 Fetching real protein data from UniProt...")
+        print("\n🌐 Fetching real protein data from UniProt (high-coverage organisms)...")
         try:
-            real_protein_data = data_generator.fetch_real_data_uniprot(n_samples=20)
+            # EXPLICIT: Use high-coverage organism targeting
+            real_protein_data = data_generator.fetch_real_data_uniprot(
+                n_samples=50,
+                prefer_high_coverage=True  # ✅ Enable optimized fetching
+            )
             if real_protein_data:
                 print(f"✅ Fetched {len(real_protein_data)} protein sequences from UniProt")
+                # Show organism breakdown
+                organisms = {}
+                for p in real_protein_data:
+                    org_id = p.get('organism_id', 'unknown')
+                    organisms[org_id] = organisms.get(org_id, 0) + 1
+                print(f"   Organism distribution: {dict(list(organisms.items())[:5])}")
             else:
                 print("⚠️  No sequences fetched from UniProt")
         except Exception as e:
             print(f"⚠️  Warning: Failed to fetch UniProt data: {e}")
+            traceback.print_exc()
         
         # Fetch AlphaFold structures for the UniProt sequences
         real_dataset = None
         if real_protein_data and not args.synthetic_only:
             try:
-                real_dataset = fetch_real_protein_structures(data_generator, real_protein_data, max_structures=20)
+                real_dataset = fetch_real_protein_structures(data_generator, real_protein_data, max_structures=50)
             except Exception as e:
                 print(f"⚠️  Warning: Failed to fetch AlphaFold structures: {e}")
         
