@@ -134,16 +134,20 @@ class ProteinDataGenerator:
         return data[:n_samples]
     
     def _fetch_from_organism(self, organism_id: str, n_samples: int) -> List[Dict]:
-        """Fetch proteins from specific organism."""
+        """Fetch proteins from specific organism.
+        
+        CRITICAL: AlphaFold DB primarily contains REVIEWED proteins only!
+        We MUST query 'reviewed:true' to get proteins that exist in AlphaFold.
+        """
         data = []
         
         try:
-            # Query reviewed proteins from this organism
+            # Query REVIEWED proteins only (SwissProt, not TrEMBL)
             url = "https://rest.uniprot.org/uniprotkb/stream"
             params = {
                 'format': 'fasta',
-                'query': f'organism_id:{organism_id} AND reviewed:true',
-                'size': n_samples
+                'query': f'organism_id:{organism_id} AND reviewed:true',  # ✅ REVIEWED ONLY
+                'size': n_samples * 2  # Fetch extra to filter later
             }
             
             response = self.session.get(url, params=params, timeout=30)
@@ -152,8 +156,17 @@ class ProteinDataGenerator:
             # Parse FASTA
             fasta_io = StringIO(response.text)
             for record in SeqIO.parse(fasta_io, "fasta"):
-                # Extract clean UniProt ID
-                uniprot_id = record.id.split('|')[1] if '|' in record.id else record.id
+                # Extract clean UniProt ID (sp|P12345|NAME format)
+                parts = record.id.split('|')
+                if len(parts) >= 2:
+                    uniprot_id = parts[1]  # Middle part is the accession
+                else:
+                    uniprot_id = record.id
+                
+                # Skip if too short or too long
+                seq_len = len(str(record.seq))
+                if seq_len < 30 or seq_len > 1000:
+                    continue
                 
                 data.append({
                     'id': uniprot_id,
@@ -173,19 +186,30 @@ class ProteinDataGenerator:
         return data
     
     def _fetch_random_proteins(self, n_samples: int) -> List[Dict]:
-        """Fetch random reviewed proteins."""
+        """Fetch random REVIEWED proteins."""
         data = []
         
         try:
-            url = f"https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=reviewed:true&size={n_samples}"
+            url = "https://rest.uniprot.org/uniprotkb/stream"
+            params = {
+                'format': 'fasta',
+                'query': 'reviewed:true',  # ✅ REVIEWED ONLY
+                'size': n_samples * 2
+            }
             
-            response = self.session.get(url, timeout=30)
+            response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
             
             # Parse FASTA
             fasta_io = StringIO(response.text)
             for record in SeqIO.parse(fasta_io, "fasta"):
-                uniprot_id = record.id.split('|')[1] if '|' in record.id else record.id
+                parts = record.id.split('|')
+                uniprot_id = parts[1] if len(parts) >= 2 else record.id
+                
+                # Skip if too short or too long
+                seq_len = len(str(record.seq))
+                if seq_len < 30 or seq_len > 1000:
+                    continue
                 
                 data.append({
                     'id': uniprot_id,
@@ -207,7 +231,7 @@ class ProteinDataGenerator:
         """Fetch predicted structure from AlphaFold DB with retry logic.
         
         Args:
-            uniprot_id: UniProt accession ID
+            uniprot_id: UniProt accession ID (must be reviewed/SwissProt)
             retry: Number of retry attempts on failure
         
         Returns:
