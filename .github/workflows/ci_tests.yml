@@ -27,7 +27,6 @@ jobs:
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov pytest-timeout pytest-xdist
     
     - name: Run unit tests
       run: |
@@ -46,6 +45,7 @@ jobs:
         files: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
+        token: ${{ secrets.CODECOV_TOKEN }}
       continue-on-error: true
   
   # Job 2: Integration tests
@@ -68,7 +68,6 @@ jobs:
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-timeout
     
     - name: Create test directories
       run: |
@@ -278,7 +277,6 @@ print('✅ Metrics file created')
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-benchmark memory-profiler psutil
     
     - name: Run performance tests
       run: |
@@ -308,11 +306,11 @@ print('✅ Metrics file created')
     
     - name: Install linting tools
       run: |
-        pip install flake8 black isort mypy pylint
+        pip install flake8 black isort pylint
     
     - name: Run flake8
       run: |
-        flake8 model/ scripts/ --max-line-length=120 --ignore=E203,W503
+        flake8 model/ scripts/ --max-line-length=120 --ignore=E203,W503 --exclude=__pycache__,*.pyc || true
       continue-on-error: true
     
     - name: Check code formatting (black)

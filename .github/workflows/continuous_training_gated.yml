@@ -5,6 +5,10 @@ on:
     - cron: '0 */6 * * *'  # Every 6 hours
   workflow_dispatch:
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   # Job 1: Quick training cycle (3 hours)
   train-model:
@@ -43,17 +47,13 @@ jobs:
     
     - name: Configure Git
       run: |
-        git config --global user.name "AutoEvolve Bot"
-        git config --global user.email "autoevolve@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
     
     - name: Create required directories
       run: |
-        mkdir -p logs metrics weights data/training_state data/protein_database
-    
-    - name: Expand protein database
-      run: |
-        python scripts/expand_protein_database.py --max-size-gb 1.0 || true
-      timeout-minutes: 5
+        mkdir -p logs metrics weights data/training_state data/protein_database visualizations
+        touch logs/.gitkeep metrics/.gitkeep
     
     - name: Run training cycle (3 hours)
       id: training
@@ -106,6 +106,7 @@ jobs:
           metrics/
           logs/
         retention-days: 7
+        if-no-files-found: warn
     
     outputs:
       training_success: ${{ steps.check_training.outputs.success }}
@@ -116,6 +117,9 @@ jobs:
     if: needs.train-model.outputs.training_success == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout repository
@@ -158,6 +162,7 @@ jobs:
         name: evaluation-results-${{ github.run_number }}
         path: metrics/benchmark_results.json
         retention-days: 7
+        if-no-files-found: warn
   
   # Job 3: Architecture evolution (runs after evaluation)
   evolve-architecture:
@@ -165,6 +170,9 @@ jobs:
     if: needs.train-model.outputs.training_success == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout repository
@@ -213,8 +221,8 @@ jobs:
     - name: Configure Git
       if: steps.improvements.outputs.found == 'true'
       run: |
-        git config --global user.name "AutoEvolve Bot"
-        git config --global user.email "autoevolve@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
     
     - name: Commit improvements
       if: steps.improvements.outputs.found == 'true'
@@ -234,9 +242,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
+    permissions:
+      contents: write
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
@@ -274,8 +287,8 @@ jobs:
     
     - name: Configure Git
       run: |
-        git config --global user.name "AutoEvolve Bot"
-        git config --global user.email "autoevolve@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
     
     - name: Commit visualizations
       run: |
@@ -296,3 +309,4 @@ jobs:
           visualizations/
           animations/
         retention-days: 7
+        if-no-files-found: warn
