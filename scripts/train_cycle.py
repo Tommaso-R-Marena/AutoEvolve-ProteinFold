@@ -12,11 +12,94 @@ from pathlib import Path
 import numpy as np
 import pickle
 import traceback
+import random
 
 sys.path.append(str(Path(__file__).parent.parent))
 
 from model.architecture import EvolvableProteinFoldingModel
 from model.data_generator import ProteinDataGenerator
+
+class RealProteinDataset:
+    """Cache and manage real protein structures from AlphaFold/PDB."""
+    
+    def __init__(self, cache_dir='data/protein_cache'):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.structures = []
+        self.sequences = []
+        
+    def add_structure(self, uniprot_id: str, sequence: str, coordinates: np.ndarray):
+        """Add a protein structure to the dataset."""
+        if len(coordinates) > 0:
+            self.structures.append(coordinates)
+            self.sequences.append(sequence)
+            
+            # Cache to disk
+            cache_file = self.cache_dir / f"{uniprot_id}.npz"
+            try:
+                np.savez_compressed(cache_file, coords=coordinates, sequence=sequence)
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to cache {uniprot_id}: {e}")
+    
+    def load_from_cache(self):
+        """Load cached structures from disk."""
+        count = 0
+        for cache_file in self.cache_dir.glob("*.npz"):
+            try:
+                data = np.load(cache_file)
+                self.structures.append(data['coords'])
+                self.sequences.append(str(data['sequence']))
+                count += 1
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to load {cache_file}: {e}")
+        return count
+    
+    def get_random_batch(self, batch_size: int, max_len: int = 256) -> dict:
+        """Get a random batch of real protein structures."""
+        if len(self.structures) == 0:
+            return None
+        
+        # Sample random proteins
+        indices = random.sample(range(len(self.structures)), min(batch_size, len(self.structures)))
+        
+        batch_sequences = []
+        batch_coords = []
+        lengths = []
+        
+        for idx in indices:
+            seq = self.sequences[idx]
+            coords = self.structures[idx]
+            
+            # Truncate if too long
+            length = min(len(seq), len(coords), max_len)
+            batch_sequences.append(seq[:length])
+            batch_coords.append(coords[:length])
+            lengths.append(length)
+        
+        # Pad to max length in batch
+        max_batch_len = max(lengths)
+        
+        # Convert sequences to indices
+        from model.data_generator import ProteinDataGenerator
+        aa_to_idx = ProteinDataGenerator.AMINO_ACID_TO_IDX
+        
+        padded_seqs = torch.zeros(len(batch_sequences), max_batch_len, dtype=torch.long)
+        padded_coords = torch.zeros(len(batch_coords), max_batch_len, 3)
+        mask = torch.zeros(len(batch_sequences), max_batch_len, dtype=torch.bool)
+        
+        for i, (seq, coords, length) in enumerate(zip(batch_sequences, batch_coords, lengths)):
+            # Convert sequence to indices
+            seq_indices = [aa_to_idx.get(aa, 0) for aa in seq]
+            padded_seqs[i, :length] = torch.tensor(seq_indices, dtype=torch.long)
+            padded_coords[i, :length] = torch.from_numpy(coords).float()
+            mask[i, :length] = True
+        
+        return {
+            'sequences': padded_seqs,
+            'coordinates': padded_coords,
+            'mask': mask,
+            'lengths': torch.tensor(lengths)
+        }
 
 class ProteinFoldingLoss(nn.Module):
     """Combined loss for protein folding prediction with robust error handling."""
@@ -168,6 +251,53 @@ class TrainingState:
         except Exception as e:
             print(f"⚠️  Warning: Failed to clear training state: {e}")
 
+def fetch_real_protein_structures(data_generator, real_protein_data, max_structures=20):
+    """Fetch AlphaFold structures for UniProt sequences."""
+    real_dataset = RealProteinDataset()
+    
+    # Try to load from cache first
+    cached_count = real_dataset.load_from_cache()
+    if cached_count > 0:
+        print(f"✅ Loaded {cached_count} structures from cache")
+    
+    # Fetch new structures if needed
+    if len(real_protein_data) > 0 and len(real_dataset.structures) < max_structures:
+        print(f"\n🧬 Fetching AlphaFold structures...")
+        structures_fetched = 0
+        
+        for i, protein in enumerate(real_protein_data[:max_structures]):
+            if structures_fetched >= max_structures:
+                break
+                
+            try:
+                # Extract UniProt ID from the ID field (format: sp|P12345|NAME)
+                uniprot_id = protein['id'].split('|')[1] if '|' in protein['id'] else protein['id']
+                
+                print(f"  Fetching {i+1}/{min(len(real_protein_data), max_structures)}: {uniprot_id}...", end=' ')
+                
+                coords = data_generator.fetch_alphafold_structure(uniprot_id)
+                
+                if coords is not None and len(coords) > 0:
+                    real_dataset.add_structure(uniprot_id, protein['sequence'], coords)
+                    structures_fetched += 1
+                    print(f"✅ ({len(coords)} residues)")
+                else:
+                    print("❌ Not found")
+                    
+                # Rate limiting - be nice to AlphaFold servers
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                continue
+        
+        if structures_fetched > 0:
+            print(f"\n✅ Successfully fetched {structures_fetched} AlphaFold structures!")
+        else:
+            print(f"\n⚠️  No AlphaFold structures fetched. Using synthetic data only.")
+    
+    return real_dataset if len(real_dataset.structures) > 0 else None
+
 def train_cycle(args):
     """Run a training cycle with comprehensive error handling."""
     training_successful = False
@@ -209,23 +339,44 @@ def train_cycle(args):
         data_generator = ProteinDataGenerator()
         
         # Try to fetch real data from UniProt
-        print("\n🌐 Attempting to fetch real protein data...")
+        real_protein_data = []
+        print("\n🌐 Fetching real protein data from UniProt...")
         try:
-            real_data = data_generator.fetch_real_data_uniprot(n_samples=50)
-            if real_data:
-                print(f"✅ Fetched {len(real_data)} real protein sequences from UniProt")
-                data_info_path = Path('data/training_data_info.json')
-                data_info_path.parent.mkdir(exist_ok=True, parents=True)
-                with open(data_info_path, 'w') as f:
-                    json.dump({
-                        'real_sequences': len(real_data),
-                        'last_updated': time.time()
-                    }, f)
+            real_protein_data = data_generator.fetch_real_data_uniprot(n_samples=20)
+            if real_protein_data:
+                print(f"✅ Fetched {len(real_protein_data)} protein sequences from UniProt")
             else:
-                print("⚠️  No real data fetched, using synthetic data only")
+                print("⚠️  No sequences fetched from UniProt")
         except Exception as e:
-            print(f"⚠️  Warning: Failed to fetch real data: {e}")
-            print("🔬 Using synthetic data only")
+            print(f"⚠️  Warning: Failed to fetch UniProt data: {e}")
+        
+        # Fetch AlphaFold structures for the UniProt sequences
+        real_dataset = None
+        if real_protein_data and not args.synthetic_only:
+            try:
+                real_dataset = fetch_real_protein_structures(data_generator, real_protein_data, max_structures=20)
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to fetch AlphaFold structures: {e}")
+        
+        # Save data info
+        try:
+            data_info_path = Path('data/training_data_info.json')
+            data_info_path.parent.mkdir(exist_ok=True, parents=True)
+            with open(data_info_path, 'w') as f:
+                json.dump({
+                    'uniprot_sequences': len(real_protein_data),
+                    'alphafold_structures': len(real_dataset.structures) if real_dataset else 0,
+                    'last_updated': time.time()
+                }, f, indent=2)
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to save data info: {e}")
+        
+        # Calculate real data mixing ratio
+        real_data_ratio = 0.3 if real_dataset and len(real_dataset.structures) >= 5 else 0.0
+        if real_data_ratio > 0:
+            print(f"\n🎯 Training with {real_data_ratio*100:.0f}% real AlphaFold structures, {(1-real_data_ratio)*100:.0f}% synthetic")
+        else:
+            print(f"\n🔬 Training with 100% synthetic data")
         
         # Optimizer with adaptive learning rate
         base_lr = 1e-4 * (0.95 ** model.generation)
@@ -238,6 +389,8 @@ def train_cycle(args):
         start_epoch = 0
         total_samples_seen = 0
         best_loss = float('inf')
+        real_samples_used = 0
+        synthetic_samples_used = 0
         
         if args.resume:
             saved_state = state_manager.load_state()
@@ -278,13 +431,23 @@ def train_cycle(args):
                 epoch += 1
                 model.train()
                 
-                # Generate training batch with limited sequence length
+                # Decide whether to use real or synthetic data
+                use_real_data = (real_dataset is not None and 
+                                random.random() < real_data_ratio)
+                
+                # Generate training batch
                 try:
-                    batch = data_generator.generate_synthetic_batch(
-                        args.batch_size,
-                        min_len=30,
-                        max_len=min(max_seq_len, 200)
-                    )
+                    if use_real_data:
+                        batch = real_dataset.get_random_batch(args.batch_size, max_len=min(max_seq_len, 200))
+                        real_samples_used += args.batch_size
+                    else:
+                        batch = data_generator.generate_synthetic_batch(
+                            args.batch_size,
+                            min_len=30,
+                            max_len=min(max_seq_len, 200)
+                        )
+                        synthetic_samples_used += args.batch_size
+                    
                     total_samples_seen += args.batch_size
                 except Exception as e:
                     print(f"⚠️  Warning: Batch generation failed: {e}. Retrying...")
@@ -371,7 +534,8 @@ def train_cycle(args):
                 if epoch % 10 == 0:
                     elapsed = time.time() - start_time
                     remaining = max_time - elapsed
-                    print(f"📈 Epoch {epoch} | Loss: {loss.item():.4f} | "
+                    data_source = "🧬 Real" if use_real_data else "🔬 Synth"
+                    print(f"📈 Epoch {epoch} | {data_source} | Loss: {loss.item():.4f} | "
                           f"Coord: {loss_dict['coord_loss']:.4f} | "
                           f"Samples: {total_samples_seen:,} | "
                           f"⏱️  {elapsed:.0f}s | Remaining: {remaining:.0f}s")
@@ -384,7 +548,9 @@ def train_cycle(args):
                             'epoch': epoch,
                             'loss': loss.item(),
                             'timestamp': time.time(),
-                            'total_samples': total_samples_seen
+                            'total_samples': total_samples_seen,
+                            'real_samples': real_samples_used,
+                            'synthetic_samples': synthetic_samples_used
                         }
                         model.performance_history.append(metadata)
                         
@@ -439,6 +605,8 @@ def train_cycle(args):
                 'final_loss': best_loss,
                 'total_time': time.time() - start_time,
                 'total_samples': total_samples_seen,
+                'real_samples': real_samples_used,
+                'synthetic_samples': synthetic_samples_used,
                 'completed': training_successful
             })
         except Exception as e:
@@ -472,6 +640,9 @@ def train_cycle(args):
                 'best_loss': best_loss,
                 'training_time': time.time() - start_time,
                 'total_samples': total_samples_seen,
+                'real_samples': real_samples_used,
+                'synthetic_samples': synthetic_samples_used,
+                'real_data_ratio': real_samples_used / total_samples_seen if total_samples_seen > 0 else 0,
                 'samples_per_epoch': total_samples_seen / epoch if epoch > 0 else 0,
                 'completed_successfully': training_successful
             }
@@ -486,7 +657,9 @@ def train_cycle(args):
         print("📊 Training Summary:")
         print(f"{'='*60}")
         print(f"  🔢 Epochs: {epoch} (started from {start_epoch})")
-        print(f"  📦 Samples processed: {total_samples_seen:,}")
+        print(f"  📦 Total samples: {total_samples_seen:,}")
+        print(f"  🧬 Real (AlphaFold): {real_samples_used:,} ({real_samples_used/total_samples_seen*100 if total_samples_seen > 0 else 0:.1f}%)")
+        print(f"  🔬 Synthetic: {synthetic_samples_used:,} ({synthetic_samples_used/total_samples_seen*100 if total_samples_seen > 0 else 0:.1f}%)")
         print(f"  ⏱️  Training time: {time.time() - start_time:.1f}s")
         print(f"  🎯 Best loss: {best_loss:.4f}")
         print(f"  ✅ Status: {'Completed' if training_successful else 'Stopped (errors)'}")
@@ -508,6 +681,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--resume', action='store_true',
                        help='Resume from saved training state')
+    parser.add_argument('--synthetic-only', action='store_true',
+                       help='Use only synthetic data (skip AlphaFold fetching)')
     args = parser.parse_args()
     
     try:
