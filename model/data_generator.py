@@ -29,6 +29,7 @@ class ProteinDataGenerator:
         self.api_keys = api_keys or {}
         self.cache = {}
         self.session = requests.Session()  # Reuse connection
+        self.session.headers.update({'User-Agent': 'AutoEvolve-ProteinFold/1.0'})
         
     def generate_synthetic_batch(self, batch_size: int, min_len: int = 50, max_len: int = 500) -> Dict[str, torch.Tensor]:
         """Generate physically plausible synthetic protein sequences."""
@@ -136,18 +137,18 @@ class ProteinDataGenerator:
     def _fetch_from_organism(self, organism_id: str, n_samples: int) -> List[Dict]:
         """Fetch proteins from specific organism.
         
-        CRITICAL: AlphaFold DB primarily contains REVIEWED proteins only!
-        We MUST query 'reviewed:true' to get proteins that exist in AlphaFold.
+        CRITICAL: Query reviewed:true to get SwissProt proteins with high AlphaFold coverage.
         """
         data = []
         
         try:
             # Query REVIEWED proteins only (SwissProt, not TrEMBL)
+            # Added 'existence:1' to get proteins with evidence at protein level
             url = "https://rest.uniprot.org/uniprotkb/stream"
             params = {
                 'format': 'fasta',
-                'query': f'organism_id:{organism_id} AND reviewed:true',  # ✅ REVIEWED ONLY
-                'size': n_samples * 2  # Fetch extra to filter later
+                'query': f'organism_id:{organism_id} AND reviewed:true AND existence:1',
+                'size': n_samples * 3  # Fetch extra to filter later
             }
             
             response = self.session.get(url, params=params, timeout=30)
@@ -162,6 +163,10 @@ class ProteinDataGenerator:
                     uniprot_id = parts[1]  # Middle part is the accession
                 else:
                     uniprot_id = record.id
+                
+                # Skip fragment proteins (accession starts with A0A or has -# suffix)
+                if uniprot_id.startswith('A0A') or '-' in uniprot_id:
+                    continue
                 
                 # Skip if too short or too long
                 seq_len = len(str(record.seq))
@@ -186,15 +191,15 @@ class ProteinDataGenerator:
         return data
     
     def _fetch_random_proteins(self, n_samples: int) -> List[Dict]:
-        """Fetch random REVIEWED proteins."""
+        """Fetch random REVIEWED proteins with evidence at protein level."""
         data = []
         
         try:
             url = "https://rest.uniprot.org/uniprotkb/stream"
             params = {
                 'format': 'fasta',
-                'query': 'reviewed:true',  # ✅ REVIEWED ONLY
-                'size': n_samples * 2
+                'query': 'reviewed:true AND existence:1',
+                'size': n_samples * 3
             }
             
             response = self.session.get(url, params=params, timeout=30)
@@ -205,6 +210,10 @@ class ProteinDataGenerator:
             for record in SeqIO.parse(fasta_io, "fasta"):
                 parts = record.id.split('|')
                 uniprot_id = parts[1] if len(parts) >= 2 else record.id
+                
+                # Skip fragments
+                if uniprot_id.startswith('A0A') or '-' in uniprot_id:
+                    continue
                 
                 # Skip if too short or too long
                 seq_len = len(str(record.seq))
@@ -228,44 +237,61 @@ class ProteinDataGenerator:
         return data
     
     def fetch_alphafold_structure(self, uniprot_id: str, retry: int = 2) -> Optional[np.ndarray]:
-        """Fetch predicted structure from AlphaFold DB with retry logic.
+        """Fetch predicted structure from AlphaFold DB with version fallback.
+        
+        AlphaFold DB updated to v6 in October 2025. This function tries:
+        1. v6 (current, 241M predictions)
+        2. v4 (legacy, 214M predictions) 
+        3. v2 (original release)
         
         Args:
-            uniprot_id: UniProt accession ID (must be reviewed/SwissProt)
-            retry: Number of retry attempts on failure
+            uniprot_id: UniProt accession ID
+            retry: Number of retry attempts per version
         
         Returns:
             Numpy array of C-alpha coordinates or None
         """
-        for attempt in range(retry):
-            try:
-                # Try AlphaFold v4 format
-                url = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_id}-F1-model_v4.pdb"
-                response = self.session.get(url, timeout=20)
-                
-                if response.status_code == 200:
-                    # Parse PDB and extract C-alpha coordinates
-                    coords = self._parse_pdb_coords(response.text)
-                    if len(coords) > 0:
-                        return coords
-                elif response.status_code == 404:
-                    # Not in database, don't retry
-                    return None
-                
-                # Rate limiting or server error, wait and retry
-                if attempt < retry - 1:
-                    time.sleep(0.5)
-            
-            except requests.exceptions.Timeout:
-                if attempt < retry - 1:
-                    time.sleep(1.0)
-                continue
-            except Exception as e:
-                if attempt < retry - 1:
-                    time.sleep(0.5)
-                continue
+        # Try versions in order: v6 (latest) → v4 → v2
+        versions = ['v6', 'v5', 'v4', 'v3', 'v2', 'v1']
         
-        return None
+        for version in versions:
+            for attempt in range(retry):
+                try:
+                    # AlphaFold DB file URL format
+                    url = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_id}-F1-model_{version}.pdb"
+                    response = self.session.get(url, timeout=15)
+                    
+                    if response.status_code == 200:
+                        # Parse PDB and extract C-alpha coordinates
+                        coords = self._parse_pdb_coords(response.text)
+                        if len(coords) > 0:
+                            return coords
+                    elif response.status_code == 404:
+                        # Not found in this version, try next
+                        break
+                    elif response.status_code == 429:
+                        # Rate limited, wait longer
+                        time.sleep(2.0)
+                        continue
+                    
+                    # Other error, retry with backoff
+                    if attempt < retry - 1:
+                        time.sleep(0.5 * (attempt + 1))
+                
+                except requests.exceptions.Timeout:
+                    if attempt < retry - 1:
+                        time.sleep(1.0)
+                    continue
+                except requests.exceptions.RequestException as e:
+                    # Connection error, retry
+                    if attempt < retry - 1:
+                        time.sleep(0.5)
+                    continue
+                except Exception as e:
+                    # Unexpected error, skip this version
+                    break
+        
+        return None  # Not found in any version
     
     def _parse_pdb_coords(self, pdb_text: str) -> np.ndarray:
         """Extract C-alpha coordinates from PDB text."""
