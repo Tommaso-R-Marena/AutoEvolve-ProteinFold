@@ -6,6 +6,7 @@ import json
 from Bio import SeqIO
 from io import StringIO
 import random
+import time
 
 class ProteinDataGenerator:
     """Generate synthetic and real protein data for training."""
@@ -13,9 +14,21 @@ class ProteinDataGenerator:
     AMINO_ACIDS = 'ACDEFGHIKLMNPQRSTVWY'
     AMINO_ACID_TO_IDX = {aa: idx for idx, aa in enumerate(AMINO_ACIDS)}
     
+    # High-coverage organisms in AlphaFold Database
+    HIGH_COVERAGE_ORGANISMS = [
+        ('9606', 'Homo sapiens'),           # Human - ~20K proteins
+        ('10090', 'Mus musculus'),          # Mouse - ~22K proteins
+        ('7227', 'Drosophila melanogaster'), # Fruit fly - ~14K proteins
+        ('6239', 'Caenorhabditis elegans'), # C. elegans - ~20K proteins
+        ('559292', 'Saccharomyces cerevisiae'), # Yeast - ~6K proteins
+        ('83333', 'Escherichia coli'),      # E. coli - ~4K proteins
+        ('3702', 'Arabidopsis thaliana'),   # Plant model - ~27K proteins
+    ]
+    
     def __init__(self, api_keys: Optional[Dict[str, str]] = None):
         self.api_keys = api_keys or {}
         self.cache = {}
+        self.session = requests.Session()  # Reuse connection
         
     def generate_synthetic_batch(self, batch_size: int, min_len: int = 50, max_len: int = 500) -> Dict[str, torch.Tensor]:
         """Generate physically plausible synthetic protein sequences."""
@@ -88,22 +101,95 @@ class ProteinDataGenerator:
         
         return coords
     
-    def fetch_real_data_uniprot(self, n_samples: int = 10) -> List[Dict]:
-        """Fetch real protein sequences from UniProt API."""
+    def fetch_real_data_uniprot(self, n_samples: int = 10, prefer_high_coverage: bool = True) -> List[Dict]:
+        """Fetch real protein sequences from UniProt API.
+        
+        Args:
+            n_samples: Number of sequences to fetch
+            prefer_high_coverage: If True, prioritize organisms with high AlphaFold coverage
+        
+        Returns:
+            List of protein data dictionaries
+        """
+        data = []
+        
+        if prefer_high_coverage:
+            # Distribute samples across high-coverage organisms
+            samples_per_org = max(1, n_samples // len(self.HIGH_COVERAGE_ORGANISMS))
+            
+            for organism_id, organism_name in self.HIGH_COVERAGE_ORGANISMS:
+                try:
+                    org_data = self._fetch_from_organism(organism_id, samples_per_org)
+                    data.extend(org_data)
+                    
+                    if len(data) >= n_samples:
+                        break
+                except Exception as e:
+                    print(f"⚠️  Failed to fetch from {organism_name}: {e}")
+                    continue
+        else:
+            # Fetch random reviewed proteins
+            data = self._fetch_random_proteins(n_samples)
+        
+        return data[:n_samples]
+    
+    def _fetch_from_organism(self, organism_id: str, n_samples: int) -> List[Dict]:
+        """Fetch proteins from specific organism."""
         data = []
         
         try:
-            # UniProt REST API query for reviewed proteins
-            url = f"https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=reviewed:true&size={n_samples}"
+            # Query reviewed proteins from this organism
+            url = "https://rest.uniprot.org/uniprotkb/stream"
+            params = {
+                'format': 'fasta',
+                'query': f'organism_id:{organism_id} AND reviewed:true',
+                'size': n_samples
+            }
             
-            response = requests.get(url, timeout=30)
+            response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
             
             # Parse FASTA
             fasta_io = StringIO(response.text)
             for record in SeqIO.parse(fasta_io, "fasta"):
+                # Extract clean UniProt ID
+                uniprot_id = record.id.split('|')[1] if '|' in record.id else record.id
+                
                 data.append({
-                    'id': record.id,
+                    'id': uniprot_id,
+                    'full_id': record.id,
+                    'sequence': str(record.seq),
+                    'description': record.description,
+                    'organism_id': organism_id
+                })
+                
+                if len(data) >= n_samples:
+                    break
+        
+        except Exception as e:
+            print(f"Error fetching from organism {organism_id}: {e}")
+            return []
+        
+        return data
+    
+    def _fetch_random_proteins(self, n_samples: int) -> List[Dict]:
+        """Fetch random reviewed proteins."""
+        data = []
+        
+        try:
+            url = f"https://rest.uniprot.org/uniprotkb/stream?format=fasta&query=reviewed:true&size={n_samples}"
+            
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            
+            # Parse FASTA
+            fasta_io = StringIO(response.text)
+            for record in SeqIO.parse(fasta_io, "fasta"):
+                uniprot_id = record.id.split('|')[1] if '|' in record.id else record.id
+                
+                data.append({
+                    'id': uniprot_id,
+                    'full_id': record.id,
                     'sequence': str(record.seq),
                     'description': record.description
                 })
@@ -112,25 +198,48 @@ class ProteinDataGenerator:
                     break
         
         except Exception as e:
-            print(f"Error fetching UniProt data: {e}")
-            # Return empty list - caller will handle fallback
+            print(f"Error fetching random proteins: {e}")
             return []
         
         return data
     
-    def fetch_alphafold_structure(self, uniprot_id: str) -> Optional[np.ndarray]:
-        """Fetch predicted structure from AlphaFold DB."""
-        try:
-            url = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_id}-F1-model_v4.pdb"
-            response = requests.get(url, timeout=30)
-            
-            if response.status_code == 200:
-                # Parse PDB and extract C-alpha coordinates
-                coords = self._parse_pdb_coords(response.text)
-                return coords
+    def fetch_alphafold_structure(self, uniprot_id: str, retry: int = 2) -> Optional[np.ndarray]:
+        """Fetch predicted structure from AlphaFold DB with retry logic.
         
-        except Exception as e:
-            print(f"Error fetching AlphaFold structure for {uniprot_id}: {e}")
+        Args:
+            uniprot_id: UniProt accession ID
+            retry: Number of retry attempts on failure
+        
+        Returns:
+            Numpy array of C-alpha coordinates or None
+        """
+        for attempt in range(retry):
+            try:
+                # Try AlphaFold v4 format
+                url = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_id}-F1-model_v4.pdb"
+                response = self.session.get(url, timeout=20)
+                
+                if response.status_code == 200:
+                    # Parse PDB and extract C-alpha coordinates
+                    coords = self._parse_pdb_coords(response.text)
+                    if len(coords) > 0:
+                        return coords
+                elif response.status_code == 404:
+                    # Not in database, don't retry
+                    return None
+                
+                # Rate limiting or server error, wait and retry
+                if attempt < retry - 1:
+                    time.sleep(0.5)
+            
+            except requests.exceptions.Timeout:
+                if attempt < retry - 1:
+                    time.sleep(1.0)
+                continue
+            except Exception as e:
+                if attempt < retry - 1:
+                    time.sleep(0.5)
+                continue
         
         return None
     
@@ -139,11 +248,14 @@ class ProteinDataGenerator:
         coords = []
         for line in pdb_text.split('\n'):
             if line.startswith('ATOM') and ' CA ' in line:
-                x = float(line[30:38].strip())
-                y = float(line[38:46].strip())
-                z = float(line[46:54].strip())
-                coords.append([x, y, z])
-        return np.array(coords)
+                try:
+                    x = float(line[30:38].strip())
+                    y = float(line[38:46].strip())
+                    z = float(line[46:54].strip())
+                    coords.append([x, y, z])
+                except (ValueError, IndexError):
+                    continue
+        return np.array(coords) if coords else np.array([])
     
     def _create_mask(self, lengths: List[int], max_len: int) -> torch.Tensor:
         """Create attention mask for padded sequences."""
@@ -185,3 +297,13 @@ class ProteinDataGenerator:
         
         R = torch.eye(3) + sin_angle * K + (1 - cos_angle) * torch.matmul(K, K)
         return R
+    
+    def get_organism_stats(self) -> Dict:
+        """Get statistics about high-coverage organisms."""
+        return {
+            'high_coverage_organisms': [
+                {'id': org_id, 'name': name} 
+                for org_id, name in self.HIGH_COVERAGE_ORGANISMS
+            ],
+            'total_organisms': len(self.HIGH_COVERAGE_ORGANISMS)
+        }
