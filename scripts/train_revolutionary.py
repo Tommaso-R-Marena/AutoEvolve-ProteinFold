@@ -161,7 +161,7 @@ class FreshDataPipeline:
 def train_revolutionary(args):
     """Training with all revolutionary features enabled."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🚀 Revolutionary Training Mode")
+    print("🚀 Revolutionary Training Mode")
     print(f"🖥️  Device: {device}")
     print("="*60)
     
@@ -220,8 +220,7 @@ def train_revolutionary(args):
     best_loss = float('inf')
     real_ratio = 0.3 if has_real_data else 0.0
     
-    print(f"
-🎯 Training Configuration:")
+    print("\n🎯 Training Configuration:")
     print(f"   Max time: {args.max_time}s ({args.max_time/3600:.1f}h)")
     print(f"   Batch size: {args.batch_size}")
     print(f"   Real data ratio: {real_ratio*100:.0f}%")
@@ -329,7 +328,7 @@ def train_revolutionary(args):
             'history': metrics_history
         }, f, indent=2)
     
-    print(f"\n✅ Revolutionary training complete!")
+    print("\n✅ Revolutionary training complete!")
     print(f"   Epochs: {epoch}")
     print(f"   Best loss: {best_loss:.4f}")
     print(f"   Time: {time.time() - start_time:.1f}s")
