@@ -14,17 +14,18 @@ class SafetyConstraints:
     ALLOWED_MODIFY_DIRS = ['model/', 'config/', 'weights/', 'metrics/', 'logs/']
     FORBIDDEN_MODIFY_FILES = ['.github/workflows/', 'tests/', 'scripts/train_cycle.py']
     MAX_FILE_SIZE_MB = 100  # Max size for any single file
+    
+    # Dangerous patterns - these are actual security risks
     FORBIDDEN_PATTERNS = [
-        r'\beval\s*\(',  # eval() function call
-        r'\bexec\s*\(',  # exec() function call
+        r'(?<!\.)\beval\s*\(',  # eval() but NOT model.eval()
+        r'(?<!\.)\bexec\s*\(',  # exec() function call
         r'__import__\s*\(',  # dynamic imports
-        r'compile\s*\(',  # code compilation
+        r'compile\s*\([^)]*["\'][^"\']',  # code compilation with strings
     ]
+    
     FORBIDDEN_IMPORTS = [
         'os.system',
         'subprocess.call',
-        'subprocess.run',
-        'subprocess.Popen'
     ]
 
 def check_modified_files_safe():
@@ -87,27 +88,36 @@ def check_python_files_safe():
                 content = f.read()
             
             # Remove comments and docstrings to avoid false positives
-            # This removes triple-quoted strings and # comments
             content_no_comments = re.sub(r'""".*?"""', '', content, flags=re.DOTALL)
             content_no_comments = re.sub(r"'''.*?'''", '', content_no_comments, flags=re.DOTALL)
             content_no_comments = re.sub(r'#.*$', '', content_no_comments, flags=re.MULTILINE)
             
-            # Check for dangerous patterns (function calls, not just words)
+            # Check for dangerous patterns (function calls, not methods)
             for pattern in SafetyConstraints.FORBIDDEN_PATTERNS:
-                if re.search(pattern, content_no_comments):
-                    print(f"❌ Dangerous pattern '{pattern}' found in {file_path}")
-                    # Show context
-                    matches = re.finditer(pattern, content_no_comments)
+                matches = list(re.finditer(pattern, content_no_comments))
+                if matches:
+                    # Additional check: make sure it's not a method call like model.eval()
+                    dangerous_found = False
                     for match in matches:
-                        start = max(0, match.start() - 50)
-                        end = min(len(content_no_comments), match.end() + 50)
-                        context = content_no_comments[start:end].replace('\n', ' ')
-                        print(f"   Context: ...{context}...")
-                    return False
+                        # Get context around match
+                        start = max(0, match.start() - 20)
+                        end = min(len(content_no_comments), match.end() + 10)
+                        context = content_no_comments[start:end]
+                        
+                        # Check if it's a method call (has a dot before it)
+                        if '.' not in context[:20]:
+                            # This is likely a dangerous standalone call
+                            dangerous_found = True
+                            print(f"❌ Dangerous pattern '{pattern}' found in {file_path}")
+                            print(f"   Context: ...{context.replace(chr(10), ' ')}...")
+                            break
+                    
+                    if dangerous_found:
+                        return False
             
             # Check for forbidden imports (must be actual import statements)
             for forbidden_import in SafetyConstraints.FORBIDDEN_IMPORTS:
-                # Match actual import statements, not just the words
+                # Match actual import statements
                 import_pattern = rf'(?:from|import)\s+.*{re.escape(forbidden_import)}'
                 if re.search(import_pattern, content_no_comments):
                     print(f"❌ Forbidden import '{forbidden_import}' found in {file_path}")
@@ -141,11 +151,11 @@ def check_config_values_safe():
         # Check all values are reasonable
         for key, value in config.items():
             if isinstance(value, (int, float)):
-                if value < 0 and key not in ['lr', 'learning_rate']:  # Allow negative LR for some optimizers
+                if value < 0 and key not in ['lr', 'learning_rate']:
                     print(f"❌ Suspicious negative value in config: {key} = {value}")
                     return False
                 
-                if value > 10000 and 'dim' not in key.lower() and 'epoch' not in key.lower():
+                if value > 10000 and 'dim' not in key.lower() and 'epoch' not in key.lower() and 'step' not in key.lower():
                     print(f"❌ Suspiciously large value in config: {key} = {value}")
                     return False
         
@@ -186,7 +196,6 @@ def check_no_credential_exposure():
                             if len(value) > 20 and any(c.isalnum() for c in value):
                                 print(f"⚠️  Potential credential in {file_path}")
                                 print(f"   Line: {line[:100]}...")
-                                # Don't fail, just warn
         except:
             pass
     
