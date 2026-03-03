@@ -2,6 +2,7 @@
 import pytest
 import torch
 import sys
+import os
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -56,6 +57,10 @@ class TestSyntheticDataGeneration:
 
 
 class TestRealDataFetching:
+    @pytest.mark.skipif(
+        os.environ.get('CI') == 'true',
+        reason="Skipping network test in CI environment"
+    )
     def test_uniprot_fetch(self, generator):
         """Test UniProt data fetching (may fail without network)."""
         try:
