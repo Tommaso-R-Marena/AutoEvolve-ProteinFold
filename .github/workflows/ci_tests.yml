@@ -106,19 +106,19 @@ jobs:
     
     - name: Test 1 - Model Creation
       run: |
-        python -c "
+        python -c '
 import sys
 from pathlib import Path
-sys.path.append('.')
+sys.path.append(".")
 from model.architecture import EvolvableProteinFoldingModel
 import json
 
-with open('config/model_config.json') as f:
+with open("config/model_config.json") as f:
     config = json.load(f)
 
 model = EvolvableProteinFoldingModel(config)
-print(f'✅ Model created: {model.config[\"embedding_dim\"]} dim, {model.config[\"n_blocks\"]} blocks')
-        "
+print("Model created: {} dim, {} blocks".format(model.config["embedding_dim"], model.config["n_blocks"]))
+        '
       timeout-minutes: 2
     
     - name: Test 2 - Training Cycle (10 seconds)
@@ -131,54 +131,54 @@ print(f'✅ Model created: {model.config[\"embedding_dim\"]} dim, {model.config[
     
     - name: Test 3 - Checkpoint Loading
       run: |
-        python -c "
+        python -c '
 import sys
-sys.path.append('.')
+sys.path.append(".")
 from model.architecture import EvolvableProteinFoldingModel
 from pathlib import Path
 
-if Path('weights/latest.pt').exists():
-    model = EvolvableProteinFoldingModel.load_checkpoint('weights/latest.pt')
-    print(f'✅ Checkpoint loaded successfully')
+if Path("weights/latest.pt").exists():
+    model = EvolvableProteinFoldingModel.load_checkpoint("weights/latest.pt")
+    print("Checkpoint loaded successfully")
 else:
-    print('⚠️ No checkpoint found (expected for first run)')
-        "
+    print("No checkpoint found (expected for first run)")
+        '
       timeout-minutes: 2
     
     - name: Test 4 - Data Generation
       run: |
-        python -c "
+        python -c '
 import sys
-sys.path.append('.')
+sys.path.append(".")
 from model.data_generator import ProteinDataGenerator
 
 gen = ProteinDataGenerator()
 batch = gen.generate_synthetic_batch(batch_size=2, min_len=30, max_len=100)
-print(f'✅ Generated batch: {batch[\'sequences\'].shape}')
-        "
+print("Generated batch: {}".format(batch["sequences"].shape))
+        '
       timeout-minutes: 2
     
     - name: Test 5 - Structure Validation
       run: |
-        python -c "
+        python -c '
 import sys
 import torch
-sys.path.append('.')
+sys.path.append(".")
 from scripts.structure_validation import StructureValidator
 
 validator = StructureValidator()
 coords = torch.randn(50, 3) * 5
 results = validator.validate_structure(coords)
-print(f'✅ Validation score: {results[\'validity_score\']:.2f}')
-        "
+print("Validation score: {:.2f}".format(results["validity_score"]))
+        '
       timeout-minutes: 2
     
     - name: Test 6 - Benchmark Suite
       run: |
-        python -c "
+        python -c '
 import sys
 import torch
-sys.path.append('.')
+sys.path.append(".")
 from scripts.benchmark_suite import ProteinFoldingBenchmark
 
 bench = ProteinFoldingBenchmark()
@@ -186,76 +186,76 @@ pred = torch.randn(50, 3)
 true = torch.randn(50, 3)
 tm = bench.compute_tm_score(pred, true)
 lddt = bench.compute_lddt(pred, true)
-print(f'✅ Benchmark: TM={tm:.3f}, lDDT={lddt:.3f}')
-        "
+print("Benchmark: TM={:.3f}, lDDT={:.3f}".format(tm, lddt))
+        '
       timeout-minutes: 2
     
     - name: Test 7 - Evolutionary Improvements
       run: |
-        python -c "
+        python -c '
 import sys
 import json
-sys.path.append('.')
+sys.path.append(".")
 from model.architecture import EvolvableProteinFoldingModel
 from scripts.evolutionary_improvements import apply_evolutionary_improvement
 
-with open('config/model_config.json') as f:
+with open("config/model_config.json") as f:
     config = json.load(f)
 
 model = EvolvableProteinFoldingModel(config)
-model = apply_evolutionary_improvement(model, 'auxiliary_heads')
-print('✅ Applied evolutionary improvement: auxiliary_heads')
-        "
+model = apply_evolutionary_improvement(model, "auxiliary_heads")
+print("Applied evolutionary improvement: auxiliary_heads")
+        '
       timeout-minutes: 3
     
     - name: Test 8 - Metrics Generation
       run: |
-        python -c "
+        python -c '
 import json
 from pathlib import Path
 
 metrics = {
-    'generation': 0,
-    'epochs': 10,
-    'final_loss': 8.5,
-    'completed_successfully': True
+    "generation": 0,
+    "epochs": 10,
+    "final_loss": 8.5,
+    "completed_successfully": True
 }
 
-Path('metrics').mkdir(exist_ok=True)
-with open('metrics/training_metrics.json', 'w') as f:
+Path("metrics").mkdir(exist_ok=True)
+with open("metrics/training_metrics.json", "w") as f:
     json.dump(metrics, f, indent=2)
 
-print('✅ Metrics file created')
-        "
+print("Metrics file created")
+        '
       timeout-minutes: 1
     
     - name: Verify all outputs
       run: |
-        echo "🔍 Verifying pipeline outputs..."
+        echo "Verifying pipeline outputs..."
         
         if [ -f "metrics/training_metrics.json" ]; then
-          echo "✅ Metrics file exists"
+          echo "Metrics file exists"
         else
-          echo "❌ Metrics file missing"
+          echo "Metrics file missing"
           exit 1
         fi
         
         if [ -d "weights" ]; then
-          echo "✅ Weights directory exists"
+          echo "Weights directory exists"
         else
-          echo "❌ Weights directory missing"
+          echo "Weights directory missing"
           exit 1
         fi
         
         if [ -d "logs" ]; then
-          echo "✅ Logs directory exists"
+          echo "Logs directory exists"
         else
-          echo "❌ Logs directory missing"
+          echo "Logs directory missing"
           exit 1
         fi
         
         echo ""
-        echo "✅ All pipeline components verified!"
+        echo "All pipeline components verified!"
   
   # Job 4: Memory and performance tests
   performance-tests:
@@ -362,23 +362,23 @@ print('✅ Metrics file created')
     steps:
     - name: Generate test summary
       run: |
-        echo "🎯 CI/CD Test Summary"
+        echo "CI/CD Test Summary"
         echo "====================================="
         echo ""
-        echo "✅ Unit Tests: ${{ needs.unit-tests.result }}"
-        echo "✅ Integration Tests: ${{ needs.integration-tests.result }}"
-        echo "✅ E2E Pipeline: ${{ needs.e2e-pipeline-test.result }}"
-        echo "✅ Performance Tests: ${{ needs.performance-tests.result }}"
-        echo "✅ Code Quality: ${{ needs.code-quality.result }}"
-        echo "✅ Security Tests: ${{ needs.security-tests.result }}"
+        echo "Unit Tests: ${{ needs.unit-tests.result }}"
+        echo "Integration Tests: ${{ needs.integration-tests.result }}"
+        echo "E2E Pipeline: ${{ needs.e2e-pipeline-test.result }}"
+        echo "Performance Tests: ${{ needs.performance-tests.result }}"
+        echo "Code Quality: ${{ needs.code-quality.result }}"
+        echo "Security Tests: ${{ needs.security-tests.result }}"
         echo ""
         echo "====================================="
         
         if [ "${{ needs.unit-tests.result }}" != "success" ] || \
            [ "${{ needs.integration-tests.result }}" != "success" ] || \
            [ "${{ needs.e2e-pipeline-test.result }}" != "success" ]; then
-          echo "❌ Critical tests failed!"
+          echo "Critical tests failed!"
           exit 1
         else
-          echo "✅ All critical tests passed!"
+          echo "All critical tests passed!"
         fi
