@@ -149,15 +149,16 @@ class StructureValidator:
             'secondary_structure': self.check_secondary_structure_consistency(coords)
         }
         
-        # Overall validity
+        # Overall validity - only check dict values that have 'valid' key
+        check_results = [v for v in results.values() if isinstance(v, dict) and 'valid' in v]
         results['overall_valid'] = all(
-            check['valid'] for check in results.values()
+            check['valid'] for check in check_results
         )
         
         results['validity_score'] = sum(
             1.0 if check['valid'] else 0.0 
-            for check in results.values()
-        ) / len(results)
+            for check in check_results
+        ) / len(check_results) if check_results else 0.0
         
         return results
     
