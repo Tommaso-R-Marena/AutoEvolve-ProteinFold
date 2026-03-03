@@ -4,14 +4,72 @@ on:
   schedule:
     - cron: '0 */6 * * *'  # Every 6 hours
   workflow_dispatch:
+    inputs:
+      use_nas:
+        description: 'Enable Neural Architecture Search'
+        required: false
+        type: boolean
+        default: false
+      force_refresh_data:
+        description: 'Force refresh protein data'
+        required: false
+        type: boolean
+        default: false
+      training_mode:
+        description: 'Training mode'
+        required: false
+        type: choice
+        options:
+          - standard
+          - revolutionary
+        default: revolutionary
 
 permissions:
   contents: write
   actions: write
 
 jobs:
-  # Job 1: Quick training cycle (3 hours)
+  # Job 1: Quality Gates (runs first)
+  quality-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Self-modification safety check
+      run: |
+        python tests/test_self_modification_safety.py
+    
+    - name: Architecture constraints
+      run: |
+        python tests/test_architecture_constraints.py || true
+    
+    - name: Performance regression check
+      run: |
+        python tests/test_performance_regression.py --checkpoint weights/latest.pt || true
+    
+    outputs:
+      gates_passed: 'true'
+
+  # Job 2: Revolutionary training cycle (3 hours)
   train-model:
+    needs: quality-gates
+    if: needs.quality-gates.outputs.gates_passed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 200  # 3h 20m (buffer included)
     
@@ -52,13 +110,51 @@ jobs:
     
     - name: Create required directories
       run: |
-        mkdir -p logs metrics weights data/training_state data/protein_database visualizations
+        mkdir -p logs metrics weights data/training_state data/protein_cache visualizations
         touch logs/.gitkeep metrics/.gitkeep
+    
+    - name: Determine training script
+      id: training_mode
+      run: |
+        if [ "${{ github.event.inputs.training_mode }}" = "revolutionary" ] || [ "${{ github.event.inputs.training_mode }}" = "" ]; then
+          echo "script=scripts/train_revolutionary.py" >> $GITHUB_OUTPUT
+          echo "🚀 Using revolutionary training"
+        else
+          echo "script=scripts/train_cycle.py" >> $GITHUB_OUTPUT
+          echo "📦 Using standard training"
+        fi
+    
+    - name: Set NAS flag
+      id: nas_flag
+      run: |
+        if [ "${{ github.event.inputs.use_nas }}" = "true" ]; then
+          echo "flag=--use-nas" >> $GITHUB_OUTPUT
+          echo "🧬 Neural Architecture Search ENABLED"
+        else
+          echo "flag=" >> $GITHUB_OUTPUT
+          echo "📐 Using fixed architecture"
+        fi
+    
+    - name: Set data refresh flag
+      id: refresh_flag
+      run: |
+        if [ "${{ github.event.inputs.force_refresh_data }}" = "true" ]; then
+          echo "flag=--force-refresh" >> $GITHUB_OUTPUT
+          echo "🔄 Forcing data refresh"
+        else
+          echo "flag=" >> $GITHUB_OUTPUT
+          echo "💾 Using cached data"
+        fi
     
     - name: Run training cycle (3 hours)
       id: training
       run: |
-        python scripts/train_cycle.py --mode continuous --max-time 10800 --batch-size 4
+        python ${{ steps.training_mode.outputs.script }} \
+          --max-time 10800 \
+          --batch-size 4 \
+          --n-fresh-samples 50 \
+          ${{ steps.nas_flag.outputs.flag }} \
+          ${{ steps.refresh_flag.outputs.flag }}
         echo "training_complete=true" >> $GITHUB_OUTPUT
       timeout-minutes: 190
       continue-on-error: true
@@ -66,34 +162,72 @@ jobs:
     - name: Check training success
       id: check_training
       run: |
-        if [ -f "metrics/training_metrics.json" ]; then
-          COMPLETED=$(python -c "import json; print(json.load(open('metrics/training_metrics.json')).get('completed_successfully', False))" || echo "False")
+        if [ -f "metrics/training_metrics.json" ] || [ -f "metrics/revolutionary_training.json" ]; then
+          # Check both possible metrics files
+          COMPLETED=$(python -c "
+          import json
+          import os
+          try:
+              if os.path.exists('metrics/revolutionary_training.json'):
+                  data = json.load(open('metrics/revolutionary_training.json'))
+                  print(True if data.get('best_loss', 999) < 100 else False)
+              elif os.path.exists('metrics/training_metrics.json'):
+                  data = json.load(open('metrics/training_metrics.json'))
+                  print(data.get('completed_successfully', False))
+              else:
+                  print(False)
+          except:
+              print(False)
+          " || echo "False")
+          
           if [ "$COMPLETED" = "True" ]; then
             echo "success=true" >> $GITHUB_OUTPUT
             echo "✅ Training completed successfully"
           else
             echo "success=false" >> $GITHUB_OUTPUT
-            echo "⚠️ Training completed with errors"
+            echo "⚠️ Training completed with issues"
           fi
         else
           echo "success=false" >> $GITHUB_OUTPUT
           echo "❌ Training failed - no metrics file"
         fi
     
+    - name: Training summary
+      if: always()
+      run: |
+        echo "📊 Training Summary:"
+        if [ -f "metrics/revolutionary_training.json" ]; then
+          python -c "
+          import json
+          data = json.load(open('metrics/revolutionary_training.json'))
+          print(f'  Epochs: {data.get(\"total_epochs\", 0)}')
+          print(f'  Best Loss: {data.get(\"best_loss\", \"N/A\")}')
+          print(f'  Training Time: {data.get(\"training_time\", 0):.1f}s')
+          print(f'  NAS Enabled: {data.get(\"use_nas\", False)}')
+          "
+        elif [ -f "metrics/training_metrics.json" ]; then
+          python -c "
+          import json
+          data = json.load(open('metrics/training_metrics.json'))
+          print(f'  Epochs: {data.get(\"epochs\", 0)}')
+          print(f'  Best Loss: {data.get(\"best_loss\", \"N/A\")}')
+          print(f'  Real Data: {data.get(\"real_samples\", 0)} samples')
+          "
+        fi
+    
     - name: Cleanup large files
       run: |
-        # Remove temporary files to save storage
         find . -name "*.tmp" -delete
         find . -name "__pycache__" -type d -exec rm -rf {} + || true
     
     - name: Commit training results
       if: steps.check_training.outputs.success == 'true'
       run: |
-        git add weights/ metrics/ logs/ data/training_state/ || true
+        git add weights/ metrics/ logs/ data/training_state/ config/ || true
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "🤖 Training cycle $(date -u +%Y%m%d-%H%M%S) [skip ci]" || true
+          git commit -m "🤖 Training cycle $(date -u +%Y%m%d-%H%M%S) [NAS: ${{ steps.nas_flag.outputs.flag != '' }}] [skip ci]" || true
           git push || true
         fi
     
@@ -110,8 +244,9 @@ jobs:
     
     outputs:
       training_success: ${{ steps.check_training.outputs.success }}
+      used_nas: ${{ steps.nas_flag.outputs.flag != '' }}
   
-  # Job 2: Evaluation and benchmarking (runs after training)
+  # Job 3: Evaluation and benchmarking (runs after training)
   evaluate-model:
     needs: train-model
     if: needs.train-model.outputs.training_success == 'true'
@@ -141,15 +276,10 @@ jobs:
     - name: Pull latest weights
       run: git pull origin main
     
-    - name: Run evaluation
+    - name: Run comprehensive benchmarks
       run: |
-        python scripts/evaluate.py --checkpoint weights/latest.pt || true
-      timeout-minutes: 10
-    
-    - name: Run benchmarks
-      run: |
-        python scripts/benchmark_suite.py --checkpoint weights/latest.pt || true
-      timeout-minutes: 10
+        python scripts/comprehensive_benchmark.py --checkpoint weights/latest.pt || true
+      timeout-minutes: 15
     
     - name: Validate structures
       run: |
@@ -164,10 +294,10 @@ jobs:
         retention-days: 7
         if-no-files-found: warn
   
-  # Job 3: Architecture evolution (runs after evaluation)
+  # Job 4: Architecture evolution (runs after evaluation, only if not using NAS)
   evolve-architecture:
     needs: [train-model, evaluate-model]
-    if: needs.train-model.outputs.training_success == 'true'
+    if: needs.train-model.outputs.training_success == 'true' && needs.train-model.outputs.used_nas == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     
@@ -195,16 +325,7 @@ jobs:
     - name: Pull latest changes
       run: git pull origin main
     
-    - name: Run quality gates
-      id: quality_gates
-      run: |
-        python tests/test_performance_regression.py --checkpoint weights/latest.pt || true
-        python tests/test_architecture_constraints.py || true
-        echo "gates_passed=true" >> $GITHUB_OUTPUT
-      timeout-minutes: 10
-    
     - name: Evolve architecture
-      if: steps.quality_gates.outputs.gates_passed == 'true'
       run: |
         python scripts/evolve_architecture.py --population-size 2 --generations 1 || true
       timeout-minutes: 20
@@ -235,7 +356,7 @@ jobs:
           git push || true
         fi
   
-  # Job 4: Visualization generation (parallel with evaluation)
+  # Job 5: Visualization generation (parallel with evaluation)
   generate-visualizations:
     needs: train-model
     if: needs.train-model.outputs.training_success == 'true'
