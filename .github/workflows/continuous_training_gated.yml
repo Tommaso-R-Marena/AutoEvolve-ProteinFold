@@ -81,7 +81,6 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        # Use default GITHUB_TOKEN with write permissions
         lfs: true
     
     - name: Pull LFS files
@@ -166,23 +165,24 @@ jobs:
       id: check_training
       run: |
         if [ -f "metrics/training_metrics.json" ] || [ -f "metrics/revolutionary_training.json" ]; then
-          # Check both possible metrics files
-          COMPLETED=$(python -c "
-          import json
-          import os
-          try:
-              if os.path.exists('metrics/revolutionary_training.json'):
-                  data = json.load(open('metrics/revolutionary_training.json'))
-                  print(True if data.get('best_loss', 999) < 100 else False)
-              elif os.path.exists('metrics/training_metrics.json'):
-                  data = json.load(open('metrics/training_metrics.json'))
-                  print(data.get('completed_successfully', False))
-              else:
-                  print(False)
-          except:
-              print(False)
-          " || echo "False")
+          python3 << 'PYTHON_EOF'
+        import json
+        import os
+        try:
+            if os.path.exists('metrics/revolutionary_training.json'):
+                data = json.load(open('metrics/revolutionary_training.json'))
+                result = True if data.get('best_loss', 999) < 100 else False
+            elif os.path.exists('metrics/training_metrics.json'):
+                data = json.load(open('metrics/training_metrics.json'))
+                result = data.get('completed_successfully', False)
+            else:
+                result = False
+            print(result)
+        except:
+            print(False)
+        PYTHON_EOF
           
+          COMPLETED=$(cat)
           if [ "$COMPLETED" = "True" ]; then
             echo "success=true" >> $GITHUB_OUTPUT
             echo "✅ Training completed successfully"
@@ -200,34 +200,32 @@ jobs:
       run: |
         echo "📊 Training Summary:"
         if [ -f "metrics/revolutionary_training.json" ]; then
-          python -c "
-          import json
-          data = json.load(open('metrics/revolutionary_training.json'))
-          print(f'  Epochs: {data.get(\"total_epochs\", 0)}')
-          print(f'  Best Loss: {data.get(\"best_loss\", \"N/A\")}')
-          print(f'  Training Time: {data.get(\"training_time\", 0):.1f}s')
-          print(f'  NAS Enabled: {data.get(\"use_nas\", False)}')
-          "
+          python3 << 'EOF'
+        import json
+        data = json.load(open('metrics/revolutionary_training.json'))
+        print(f"  Epochs: {data.get('total_epochs', 0)}")
+        print(f"  Best Loss: {data.get('best_loss', 'N/A')}")
+        print(f"  Training Time: {data.get('training_time', 0):.1f}s")
+        print(f"  NAS Enabled: {data.get('use_nas', False)}")
+        EOF
         elif [ -f "metrics/training_metrics.json" ]; then
-          python -c "
-          import json
-          data = json.load(open('metrics/training_metrics.json'))
-          print(f'  Epochs: {data.get(\"epochs\", 0)}')
-          print(f'  Best Loss: {data.get(\"best_loss\", \"N/A\")}')
-          print(f'  Real Data: {data.get(\"real_samples\", 0)} samples')
-          "
+          python3 << 'EOF'
+        import json
+        data = json.load(open('metrics/training_metrics.json'))
+        print(f"  Epochs: {data.get('epochs', 0)}")
+        print(f"  Best Loss: {data.get('best_loss', 'N/A')}")
+        print(f"  Real Data: {data.get('real_samples', 0)} samples")
+        EOF
         fi
     
     - name: Cleanup large files before commit
       run: |
-        # Only keep essential protein cache files (limit to 50 most recent)
         if [ -d "data/protein_cache" ]; then
           cd data/protein_cache
-          # Keep only 50 most recently modified files
-          ls -t | tail -n +51 | xargs -r rm --
+          ls -t | tail -n +51 | xargs -r rm -- || true
           cd ../..
         fi
-        find . -name "*.tmp" -delete
+        find . -name "*.tmp" -delete || true
         find . -name "__pycache__" -type d -exec rm -rf {} + || true
     
     - name: Commit training results
@@ -235,7 +233,6 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # Add only specific directories to avoid bloat
         git add weights/ metrics/ logs/ data/training_state/ config/ data/protein_cache/*.npz || true
         
         if git diff --staged --quiet; then
@@ -243,14 +240,13 @@ jobs:
         else
           git commit -m "🤖 Training cycle $(date -u +%Y%m%d-%H%M%S) [NAS: ${{ steps.nas_flag.outputs.flag != '' }}] [skip ci]"
           
-          # Push with retry logic
           for i in {1..3}; do
             if git push origin HEAD:main; then
               echo "✅ Successfully pushed changes"
               break
             else
               echo "⚠️ Push attempt $i failed, retrying..."
-              git pull --rebase origin main
+              git pull --rebase origin main || true
               sleep 5
             fi
           done
@@ -271,7 +267,7 @@ jobs:
       training_success: ${{ steps.check_training.outputs.success }}
       used_nas: ${{ steps.nas_flag.outputs.flag != '' }}
   
-  # Job 3: Evaluation and benchmarking (runs after training)
+  # Job 3: Evaluation and benchmarking
   evaluate-model:
     needs: train-model
     if: needs.train-model.outputs.training_success == 'true'
@@ -317,7 +313,7 @@ jobs:
         retention-days: 7
         if-no-files-found: warn
   
-  # Job 4: Architecture evolution (runs after evaluation, only if not using NAS)
+  # Job 4: Architecture evolution
   evolve-architecture:
     needs: [train-model, evaluate-model]
     if: needs.train-model.outputs.training_success == 'true' && needs.train-model.outputs.used_nas == 'false'
@@ -379,7 +375,7 @@ jobs:
           git push origin HEAD:main || true
         fi
   
-  # Job 5: Visualization generation (parallel with evaluation)
+  # Job 5: Visualization generation
   generate-visualizations:
     needs: train-model
     if: needs.train-model.outputs.training_success == 'true'
