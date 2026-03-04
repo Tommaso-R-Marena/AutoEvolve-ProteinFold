@@ -132,8 +132,15 @@ class EvolvableProteinFoldingModel(nn.Module):
     
     @classmethod
     def load_checkpoint(cls, path: str) -> 'EvolvableProteinFoldingModel':
-        """Load model from checkpoint."""
-        checkpoint = torch.load(path, map_location='cpu')
+        """Load model from checkpoint.
+        
+        Note: Uses weights_only=False for compatibility with PyTorch 2.6+.
+        This is safe for trusted checkpoint files from our training pipeline.
+        """
+        # PyTorch 2.6+ changed default to weights_only=True
+        # Our checkpoints contain custom objects (config dict, metadata)
+        # so we need weights_only=False
+        checkpoint = torch.load(path, map_location='cpu', weights_only=False)
         model = cls(checkpoint['config'])
         model.load_state_dict(checkpoint['model_state_dict'])
         model.generation = checkpoint.get('generation', 0)
