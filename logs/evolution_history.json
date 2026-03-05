@@ -30,5 +30,15 @@
       "generation": 1
     },
     "improved": false
+  },
+  {
+    "generation": 0,
+    "base_performance": 49.39613265991211,
+    "best_mutant_performance": 42.93977813720703,
+    "mutations": {
+      "mutations": [],
+      "generation": 1
+    },
+    "improved": true
   }
 ]
