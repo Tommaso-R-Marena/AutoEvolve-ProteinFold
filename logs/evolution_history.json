@@ -231,5 +231,17 @@
       "generation": 1
     },
     "improved": true
+  },
+  {
+    "generation": 0,
+    "base_performance": 48.12487525939942,
+    "best_mutant_performance": 46.143458938598634,
+    "mutations": {
+      "mutations": [
+        "Added Evoformer block (total: 4)"
+      ],
+      "generation": 1
+    },
+    "improved": true
   }
 ]
