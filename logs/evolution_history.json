@@ -263,5 +263,15 @@
       "generation": 1
     },
     "improved": false
+  },
+  {
+    "generation": 0,
+    "base_performance": 49.18367500305176,
+    "best_mutant_performance": 44.2587028503418,
+    "mutations": {
+      "mutations": [],
+      "generation": 1
+    },
+    "improved": true
   }
 ]
