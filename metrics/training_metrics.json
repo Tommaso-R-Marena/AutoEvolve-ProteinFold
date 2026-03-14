@@ -1,13 +1,13 @@
 {
   "generation": 0,
-  "epochs": 5091,
-  "final_loss": 8.630353927612305,
-  "best_loss": 8.630353927612305,
-  "training_time": 18000.473485469818,
-  "total_samples": 20364,
-  "real_samples": 6040,
-  "synthetic_samples": 14324,
-  "real_data_ratio": 0.29660184639560006,
+  "epochs": 4719,
+  "final_loss": 8.330399513244629,
+  "best_loss": 8.330399513244629,
+  "training_time": 18003.608510017395,
+  "total_samples": 18876,
+  "real_samples": 5620,
+  "synthetic_samples": 13256,
+  "real_data_ratio": 0.2977325704598432,
   "samples_per_epoch": 4.0,
   "completed_successfully": true
 }
