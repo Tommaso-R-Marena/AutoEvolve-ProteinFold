@@ -3,7 +3,7 @@
   "embedding_dim": 128,
   "pair_dim": 64,
   "n_heads": 4,
-  "n_blocks": 6,
+  "n_blocks": 7,
   "n_structure_blocks": 1,
   "dropout": 0.1,
   "max_sequence_length": 256
